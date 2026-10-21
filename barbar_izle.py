@@ -619,6 +619,10 @@ def tek_tur():
         kisi["alanlar"].extend(ayar["sahip_alanlari"])
         durum["sahip_tohumlandi"] = True
     komutlari_isle(tg, durum, ayar)
+    if durum.get("grup_id") and not durum.get("grup_test_1"):
+        ok = tg.gonder(durum["grup_id"], "🔧 Test: bot bu gruba yazabiliyor. Komutlar için /yardim")
+        print(f"::notice::Grup test mesajı: {'gönderildi' if ok else 'GÖNDERİLEMEDİ'}")
+        durum["grup_test_1"] = True
     basarili = barbarlari_tara(tg, durum, ayar)
     oyunculari_guncelle(tg, durum, ayar)
     durum_yaz(durum)
