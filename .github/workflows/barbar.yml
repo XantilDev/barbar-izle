@@ -1,0 +1,41 @@
+name: Barbar izleyici
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # her saat başı +17 dk (Klanlar listeyi saatte bir günceller)
+  workflow_dispatch:       # Actions sekmesinden elle çalıştırmak için
+  push:
+    paths: ["barbar.json", "barbar_izle.py", ".github/workflows/barbar.yml"]  # ayar değişince hemen çalış
+
+permissions:
+  contents: write          # barbar_durum.json'u depoya geri kaydetmek için
+
+concurrency:
+  group: barbar
+  cancel-in-progress: false
+
+jobs:
+  tara:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tara ve bildir
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python barbar_izle.py bir-kez
+
+      - name: Durumu kaydet
+        run: |
+          git config user.name "barbar-bot"
+          git config user.email "barbar-bot@users.noreply.github.com"
+          git add barbar_durum.json
+          git diff --cached --quiet || git commit -m "Durum güncellendi"
+          git pull --rebase
+          git push
