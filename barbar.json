@@ -1,20 +1,9 @@
 {
   "dunya": "https://trp13.klanlar.org",
-  "kontrol_araligi_dk": 60,
+  "tum_harita": true,
   "min_puan": 0,
-  "alanlar": [
-    {
-      "ad": "Ana bölge",
-      "x1": 480,
-      "y1": 480,
-      "x2": 520,
-      "y2": 520
-    },
-    {
-      "ad": "Köyüm çevresi",
-      "merkez_x": 500,
-      "merkez_y": 500,
-      "yaricap": 15
-    }
+  "kisi_basi_max_alan": 10,
+  "sahip_alanlari": [
+    {"tip": "dikdortgen", "x1": 421, "x2": 429, "y1": 513, "y2": 521}
   ]
 }

@@ -2,7 +2,7 @@ name: Barbar izleyici
 
 on:
   schedule:
-    - cron: "17 * * * *"   # her saat başı +17 dk (Klanlar listeyi saatte bir günceller)
+    - cron: "7,37 * * * *"   # 30 dakikada bir: komutlara yanıt; köy listesi saatte bir indirilir
   workflow_dispatch:       # Actions sekmesinden elle çalıştırmak için
   push:
     paths: ["barbar.json", "barbar_izle.py", ".github/workflows/barbar.yml"]  # ayar değişince hemen çalış
