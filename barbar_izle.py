@@ -15,6 +15,8 @@ Grup komutları (bot yanıtları bir sonraki çalışmada, en geç ~5 dk içinde
   /alan 500|500 15          -> daire alan ekler (merkez + yarıçap)
   /alanlarim                -> kayıtlı alanlarınızı listeler
   /alansil                  -> tüm alanlarınızı siler
+  /oyuncu İsim              -> oyuncu bilgisi, aktiflik durumu ve profil bağlantısı
+  /pasifler [gün]           -> X gündür (varsayılan 5) hiç gelişmeyen oyuncular
   /yardim                   -> komut listesi
 
 Ayarlar barbar.json'da, durum (alanlar, bilinen köyler) barbar_durum.json'da tutulur.
@@ -49,9 +51,13 @@ VARSAYILAN_AYAR = {
     "tum_harita": True,     # False: yalnızca birinin alanına düşen köyler bildirilir
     "min_puan": 0,          # bu puanın altındaki barbar köyleri yok sayılır
     "kisi_basi_max_alan": 10,
+    "pasif_liste_gun": 5,       # /pasifler varsayılanı
+    "pasif_bildirim": True,     # 7 gündür hareketsiz oyuncuları otomatik bildir
+    "pasif_bildirim_gun": 7,
 }
+TUR = {}   # tek çalışma içinde paylaşılan veri (indirilen köy listesi gibi)
 INDIRME_ARALIGI_SN = 55 * 60   # sürüm bilgisi alınamazsa en fazla saatte bir indir
-UA = "barbar-izle/2.1 (kisisel kullanim)"
+UA = "barbar-izle/3.0 (kisisel kullanim)"
 MESAJ_SINIRI = 3800            # Telegram sınırı 4096
 
 
@@ -74,26 +80,43 @@ def durum_yaz(durum):
 # --------------------------------------------------------------------------- #
 # Köy verisi
 # --------------------------------------------------------------------------- #
-def liste_surumu(dunya):
-    """Listeyi indirmeden yalnızca sürüm bilgisini (Last-Modified / ETag) sorar."""
-    url = dunya.rstrip("/") + "/map/village.txt.gz"
-    istek = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+def _url(dunya, ad):
+    return f"{dunya.rstrip('/')}/map/{ad}.txt.gz"
+
+
+def dosya_surumu(dunya, ad):
+    """Dosyayı indirmeden yalnızca sürüm bilgisini (Last-Modified / ETag) sorar."""
+    istek = urllib.request.Request(_url(dunya, ad), method="HEAD", headers={"User-Agent": UA})
     with urllib.request.urlopen(istek, timeout=30) as r:
         return r.headers.get("Last-Modified") or r.headers.get("ETag")
 
 
-def koyleri_indir(dunya):
-    """village.txt satırları: id,ad,x,y,oyuncu_id,puan,bonus"""
-    url = dunya.rstrip("/") + "/map/village.txt.gz"
-    istek = urllib.request.Request(url, headers={"User-Agent": UA})
+def dosya_indir(dunya, ad):
+    istek = urllib.request.Request(_url(dunya, ad), headers={"User-Agent": UA})
     with urllib.request.urlopen(istek, timeout=60) as r:
         ham = r.read()
         surum = r.headers.get("Last-Modified") or r.headers.get("ETag")
     try:
-        metin = gzip.decompress(ham).decode("utf-8")
+        return gzip.decompress(ham).decode("utf-8"), surum
     except OSError:
-        metin = ham.decode("utf-8")
+        return ham.decode("utf-8"), surum
+
+
+def liste_surumu(dunya):
+    return dosya_surumu(dunya, "village")
+
+
+def koyleri_indir(dunya):
+    """village.txt satırları: id,ad,x,y,oyuncu_id,puan,bonus"""
+    metin, surum = dosya_indir(dunya, "village")
     return koyleri_ayristir(metin), surum
+
+
+def satirlar_csv(metin):
+    for satir in metin.splitlines():
+        p = satir.strip().split(",")
+        if len(p) >= 3:
+            yield p
 
 
 def koyleri_ayristir(metin):
@@ -184,6 +207,9 @@ YARDIM = (
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarını gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
+    "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
+    "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n\n"
+    "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
     "⏱️ Komutlara en geç ~5 dakika içinde yanıt veririm. "
     "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 5 dk sonra bildiririm."
 )
@@ -263,6 +289,238 @@ def komutlari_isle(tg, durum, ayar):
         elif komut == "/alansil":
             kisiler.pop(uid, None)
             tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)
+        elif komut == "/oyuncu":
+            komut_oyuncu(tg, durum, ayar, chat_id, mid, arg)
+        elif komut == "/pasifler":
+            sayi = re.findall(r"\d+", arg)
+            komut_pasifler(tg, durum, ayar, chat_id, mid, int(sayi[0]) if sayi else ayar["pasif_liste_gun"])
+
+
+# --------------------------------------------------------------------------- #
+# Oyuncu takibi ve aktiflik
+# --------------------------------------------------------------------------- #
+GUN = 86400
+
+
+def tr_kucuk(s):
+    return s.replace("İ", "i").replace("I", "ı").lower()
+
+
+def nokta(n):
+    return f"{n:,}".replace(",", ".")
+
+
+def sure_metni(sn):
+    sn = max(0, int(sn))
+    g, kalan = divmod(sn, GUN)
+    sa = kalan // 3600
+    if g:
+        return f"{g} gün {sa} sa" if sa else f"{g} gün"
+    return f"{sa} sa" if sa else f"{max(1, kalan // 60)} dk"
+
+
+def oyuncu_linki(ayar, pid, o):
+    url = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_player&id={pid}"
+    return f'<a href="{url}">{html.escape(o["n"])}</a>'
+
+
+def klan_metni(ayar, durum, o):
+    tag = durum.get("klanlar", {}).get(str(o.get("kl", 0)))
+    if not tag:
+        return ""
+    url = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_ally&id={o['kl']}"
+    return f' <a href="{url}">[{html.escape(tag)}]</a>'
+
+
+def hareketsizlik(durum, o, simdi):
+    """(saniye, kesin_mi): son gelişmeden bu yana geçen süre. Takip başlangıcından
+    beri hiç gelişme yoksa süre 'en az' anlamındadır (kesin değildir)."""
+    return simdi - o["d"], o["d"] > durum.get("takip_baslangic", 0)
+
+
+def oyunculari_guncelle(tg, durum, ayar):
+    dunya = ayar["dunya"]
+    surumler = durum.setdefault("surumler", {})
+    try:
+        surum = dosya_surumu(dunya, "player")
+    except Exception as e:
+        print(f"[{zaman()}] Oyuncu listesi sürümü sorulamadı: {e}")
+        return
+    if surum and surum == surumler.get("player"):
+        return
+    try:
+        oyuncu_txt, surum = dosya_indir(dunya, "player")
+        klan_txt, _ = dosya_indir(dunya, "ally")
+        oda_txt, _ = dosya_indir(dunya, "kill_att")
+        ods_txt, _ = dosya_indir(dunya, "kill_sup")
+    except Exception as e:
+        print(f"[{zaman()}] Oyuncu verileri indirilemedi: {e}")
+        return
+    surumler["player"] = surum
+
+    oda = {p[1]: int(p[2]) for p in satirlar_csv(oda_txt) if p[2].isdigit()}
+    ods = {p[1]: int(p[2]) for p in satirlar_csv(ods_txt) if p[2].isdigit()}
+    durum["klanlar"] = {p[0]: urllib.parse.unquote_plus(p[2]) for p in satirlar_csv(klan_txt)}
+
+    simdi = int(time.time())
+    durum.setdefault("takip_baslangic", simdi)
+    eski = durum.get("oyuncular", {})
+    yeni = {}
+    for p in satirlar_csv(oyuncu_txt):
+        if len(p) < 6:
+            continue
+        pid = p[0]
+        try:
+            v = {"n": urllib.parse.unquote_plus(p[1]), "kl": int(p[2]), "k": int(p[3]),
+                 "p": int(p[4]), "r": int(p[5]), "a": oda.get(pid, 0), "s": ods.get(pid, 0)}
+        except ValueError:
+            continue
+        o = eski.get(pid)
+        # Gelişme: puan, köy, saldırı (ODA) ya da destek (ODS) artışı.
+        # Savunma puanı (ODD) sayılmaz: hareketsiz oyuncu saldırı yedikçe de artar.
+        if o is None:
+            v["d"], v["b"] = simdi, False
+        elif v["p"] > o["p"] or v["k"] > o["k"] or v["a"] > o["a"] or v["s"] > o["s"]:
+            v["d"], v["b"] = simdi, False
+        else:
+            v["d"], v["b"] = o["d"], o.get("b", False)
+        yeni[pid] = v
+    durum["oyuncular"] = yeni
+    print(f"[{zaman()}] {len(yeni)} oyuncu güncellendi.")
+
+    if ayar["pasif_bildirim"]:
+        pasifleri_bildir(tg, durum, ayar, simdi)
+
+
+def pasifleri_bildir(tg, durum, ayar, simdi):
+    esik = ayar["pasif_bildirim_gun"] * GUN
+    if simdi - durum["takip_baslangic"] < esik:
+        return   # yeterince uzun süredir takip etmiyoruz; yanlış alarm vermeyelim
+    yeni_pasifler = [(pid, o) for pid, o in durum["oyuncular"].items()
+                     if not o["b"] and o["k"] > 0 and simdi - o["d"] >= esik]
+    if not yeni_pasifler:
+        return
+    for _, o in yeni_pasifler:
+        o["b"] = True   # her oyuncu bir kez bildirilir; tekrar gelişirse sıfırlanır
+
+    koyler = TUR.get("koyler")
+    if koyler is None:
+        try:
+            koyler, _ = koyleri_indir(ayar["dunya"])
+        except Exception:
+            koyler = []
+    oyuncu_koyleri = {}
+    for k in koyler:
+        oyuncu_koyleri.setdefault(str(k["oyuncu"]), []).append(k)
+
+    satirlar = []
+    for pid, o in sorted(yeni_pasifler, key=lambda t: -t[1]["p"]):
+        satir = (f"👤 {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · "
+                 f"{o['k']} köy · {nokta(o['p'])} puan")
+        etiketli = False
+        for k in oyuncu_koyleri.get(pid, []):
+            etiketler = [etiket(uid, kisi) for uid, kisi in durum.get("kisiler", {}).items()
+                         if any(alanda_mi(k, a) for a in kisi["alanlar"])]
+            if etiketler:
+                link = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_village&id={k['id']}"
+                satir += f'\n    📍 <a href="{link}">{k["x"]}|{k["y"]}</a> — ' + ", ".join(etiketler)
+                etiketli = True
+        satirlar.append((not etiketli, satir))
+    satirlar.sort(key=lambda t: t[0])
+    hedef = durum.get("grup_id") or tg.sahip_id
+    parcali_gonder(tg, hedef,
+                   f"⚫ <b>{len(satirlar)} OYUNCU {ayar['pasif_bildirim_gun']} GÜNDÜR HAREKETSİZ</b>\n"
+                   "Puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
+                   [s for _, s in satirlar])
+
+
+def komut_oyuncu(tg, durum, ayar, chat_id, mid, sorgu):
+    oyuncular = durum.get("oyuncular")
+    if not oyuncular:
+        tg.gonder(chat_id, "Oyuncu listesi henüz yüklenmedi, biraz sonra tekrar dene.", mid)
+        return
+    q = tr_kucuk(sorgu.strip())
+    if not q:
+        tg.gonder(chat_id, "Örnek: <b>/oyuncu OyuncuAdı</b>", mid)
+        return
+    bulunan = [pid for pid, o in oyuncular.items() if tr_kucuk(o["n"]) == q]
+    if not bulunan:
+        bulunan = [pid for pid, o in oyuncular.items() if q in tr_kucuk(o["n"])]
+    if not bulunan:
+        tg.gonder(chat_id, f"“{html.escape(sorgu.strip())}” adında oyuncu bulamadım.", mid)
+        return
+    if len(bulunan) > 1:
+        bulunan.sort(key=lambda pid: -oyuncular[pid]["p"])
+        liste = "\n".join(f"• {oyuncu_linki(ayar, pid, oyuncular[pid])}{klan_metni(ayar, durum, oyuncular[pid])}"
+                          for pid in bulunan[:10])
+        ek = f"\n… ve {len(bulunan) - 10} oyuncu daha" if len(bulunan) > 10 else ""
+        tg.gonder(chat_id, f"Birden fazla oyuncu bulundu, tam adını yaz:\n{liste}{ek}", mid)
+        return
+
+    pid = bulunan[0]
+    o = oyuncular[pid]
+    simdi = int(time.time())
+    sn, kesin = hareketsizlik(durum, o, simdi)
+    gun = sn / GUN
+    if gun < 2:
+        durum_metni = "🟢 Aktif"
+    elif gun < 5:
+        durum_metni = "🟡 Az aktif"
+    elif gun < 7:
+        durum_metni = "🔴 Pasif"
+    else:
+        durum_metni = "⚫ Uzun süredir hareketsiz — barbara düşebilir"
+    if kesin:
+        son = f"{sure_metni(sn)} önce"
+    else:
+        son = f"takip başladığından beri yok (en az {sure_metni(sn)})"
+        if gun < 2:
+            durum_metni = "⚪ Henüz bilinmiyor (takip yeni başladı)"
+    tg.gonder(chat_id,
+              f"👤 <b>{oyuncu_linki(ayar, pid, o)}</b>{klan_metni(ayar, durum, o)}\n"
+              f"🏘️ {o['k']} köy · {nokta(o['p'])} puan · {o['r']}. sıra\n"
+              f"⚔️ ODA {nokta(o['a'])} · 🤝 ODS {nokta(o['s'])}\n"
+              f"📈 Son gelişme: {son}\n"
+              f"{durum_metni}", mid)
+
+
+def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
+    oyuncular = durum.get("oyuncular")
+    if not oyuncular:
+        tg.gonder(chat_id, "Oyuncu listesi henüz yüklenmedi, biraz sonra tekrar dene.", mid)
+        return
+    simdi = int(time.time())
+    takip = simdi - durum["takip_baslangic"]
+    esik = max(1, gun) * GUN
+    if takip < esik:
+        hazir = datetime.fromtimestamp(durum["takip_baslangic"] + esik).strftime("%d.%m %H:%M")
+        hic = sum(1 for o in oyuncular.values() if o["k"] > 0 and o["d"] <= durum["takip_baslangic"])
+        tg.gonder(chat_id, f"Oyuncu takibi {sure_metni(takip)} önce başladı. {gun} günlük liste "
+                           f"<b>{hazir}</b> itibarıyla hazır olur.\n"
+                           f"Şu ana kadar hiç gelişme göstermeyen oyuncu sayısı: <b>{hic}</b>", mid)
+        return
+    pasifler = sorted(((pid, o) for pid, o in oyuncular.items()
+                       if o["k"] > 0 and simdi - o["d"] >= esik), key=lambda t: -t[1]["p"])
+    if not pasifler:
+        tg.gonder(chat_id, f"{gun} gündür hareketsiz oyuncu yok.", mid)
+        return
+    satirlar = [f"• {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · {o['k']} köy · "
+                f"{nokta(o['p'])} puan · {sure_metni(simdi - o['d'])}"
+                for pid, o in pasifler[:60]]
+    if len(pasifler) > 60:
+        satirlar.append(f"… ve {len(pasifler) - 60} oyuncu daha")
+    parcali_gonder(tg, chat_id, f"😴 <b>{gun} gündür gelişmeyen {len(pasifler)} oyuncu</b>\n"
+                                "(puan, köy, ODA, ODS değişmedi — puana göre sıralı)\n\n", satirlar, mid)
+
+
+def parcali_gonder(tg, hedef, baslik, satirlar, yanit_id=None):
+    parca = baslik
+    for s in satirlar:
+        if len(parca) + len(s) + 1 > MESAJ_SINIRI:
+            tg.gonder(hedef, parca, yanit_id)
+            parca = "<b>(devam)</b>\n\n"
+        parca += s + "\n"
+    tg.gonder(hedef, parca, yanit_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +545,7 @@ def barbarlari_tara(tg, durum, ayar):
         return False
     durum["son_indirme"] = int(time.time())
     durum["liste_surumu"] = surum
+    TUR["koyler"] = koyler
 
     barbarlar = {k["id"]: k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]}
     hedef = durum.get("grup_id") or tg.sahip_id
@@ -321,18 +580,12 @@ def barbarlari_tara(tg, durum, ayar):
         return True
 
     satirlar.sort(key=lambda t: t[0])
-    baslik = f"🏚️ <b>{len(satirlar)} YENİ BARBAR KÖYÜ</b>\n\n"
-    parca = baslik
-    for _, s in satirlar:
-        if len(parca) + len(s) + 1 > MESAJ_SINIRI:
-            tg.gonder(hedef, parca)
-            parca = "🏚️ <b>(devam)</b>\n\n"
-        parca += s + "\n"
-    tg.gonder(hedef, parca)
+    parcali_gonder(tg, hedef, f"🏚️ <b>{len(satirlar)} YENİ BARBAR KÖYÜ</b>\n\n", [s for _, s in satirlar])
     return True
 
 
 def tek_tur():
+    TUR.clear()
     ayar = {**VARSAYILAN_AYAR, **json_oku(AYAR, {})}
     tg = telegram_olustur()
     durum = json_oku(DURUM, {})
@@ -343,6 +596,7 @@ def tek_tur():
         durum["sahip_tohumlandi"] = True
     komutlari_isle(tg, durum, ayar)
     basarili = barbarlari_tara(tg, durum, ayar)
+    oyunculari_guncelle(tg, durum, ayar)
     durum_yaz(durum)
     return basarili
 
