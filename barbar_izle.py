@@ -345,7 +345,16 @@ def sure_metni(sn):
 
 def oyuncu_linki(ayar, pid, o):
     url = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_player&id={pid}"
-    return f'<a href="{url}">{html.escape(o["n"])}</a>'
+    return f'<a href="{url}">{html.escape(o["n"])}</a>' + twstats_linki(ayar, pid)
+
+
+def twstats_linki(ayar, pid):
+    """Oyuncunun TWStats sayfası (puan geçmişi grafiği) — yalnızca klanlar.org dünyalarında."""
+    host = urllib.parse.urlparse(ayar["dunya"]).hostname or ""
+    if not host.endswith("klanlar.org"):
+        return ""
+    dunya_kodu = host.split(".")[0]
+    return f' <a href="https://tr.twstats.com/{dunya_kodu}/index.php?page=player&id={pid}">📊</a>'
 
 
 def klan_metni(ayar, durum, o):
@@ -517,11 +526,20 @@ def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
     takip = simdi - durum["takip_baslangic"]
     esik = max(1, gun) * GUN
     if takip < esik:
+        # Henüz yeterli geçmiş yok: takip başlangıcından beri hiç gelişmeyenleri göster
         hazir = datetime.fromtimestamp(durum["takip_baslangic"] + esik).strftime("%d.%m %H:%M")
-        hic = sum(1 for o in oyuncular.values() if o["k"] > 0 and o["d"] <= durum["takip_baslangic"])
-        tg.gonder(chat_id, f"Oyuncu takibi {sure_metni(takip)} önce başladı. {gun} günlük liste "
-                           f"<b>{hazir}</b> itibarıyla hazır olur.\n"
-                           f"Şu ana kadar hiç gelişme göstermeyen oyuncu sayısı: <b>{hic}</b>", mid)
+        adaylar = sorted(((pid, o) for pid, o in oyuncular.items()
+                          if o["k"] > 0 and o["d"] <= durum["takip_baslangic"]), key=lambda t: -t[1]["p"])
+        satirlar = [f"• {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · {o['k']} köy · "
+                    f"{nokta(o['p'])} puan" for pid, o in adaylar[:60]]
+        if len(adaylar) > 60:
+            satirlar.append(f"… ve {len(adaylar) - 60} oyuncu daha")
+        parcali_gonder(tg, chat_id,
+                       f"⏳ <b>Takip {sure_metni(takip)} önce başladı.</b> O zamandan beri hiç gelişmeyen "
+                       f"<b>{len(adaylar)}</b> oyuncu (puana göre sıralı).\n"
+                       f"Süre kısa olduğu için bu liste kesin değil; gerçek {gun} günlük liste <b>{hazir}</b>'de hazır olur. "
+                       "📊 bağlantısından oyuncunun geçmiş puanlarına bakabilirsiniz.\n\n",
+                       satirlar or ["(henüz yok)"], mid)
         return
     pasifler = sorted(((pid, o) for pid, o in oyuncular.items()
                        if o["k"] > 0 and simdi - o["d"] >= esik), key=lambda t: -t[1]["p"])
@@ -618,13 +636,13 @@ def tek_tur():
         kisi = durum.setdefault("kisiler", {}).setdefault(tg.sahip_id, {"ad": "Kurucu", "alanlar": []})
         kisi["alanlar"].extend(ayar["sahip_alanlari"])
         durum["sahip_tohumlandi"] = True
+    oyunculari_guncelle(tg, durum, ayar)   # komutlar güncel veriyle yanıtlansın
     komutlari_isle(tg, durum, ayar)
     if durum.get("grup_id") and not durum.get("grup_test_1"):
         ok = tg.gonder(durum["grup_id"], "🔧 Test: bot bu gruba yazabiliyor. Komutlar için /yardim")
         print(f"::notice::Grup test mesajı: {'gönderildi' if ok else 'GÖNDERİLEMEDİ'}")
         durum["grup_test_1"] = True
     basarili = barbarlari_tara(tg, durum, ayar)
-    oyunculari_guncelle(tg, durum, ayar)
     durum_yaz(durum)
     print(f"::notice::Gönderilen mesaj: {TUR.get('gonderilen', 0)}")
     return basarili and not TUR.get("hata")
