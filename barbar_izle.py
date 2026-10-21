@@ -8,7 +8,7 @@ Klanlar barbar köyü izleyici (Telegram grubu, arkadaş etiketlemeli)
 - Grup üyeleri kendi alanlarını komutla kaydeder; köy birinin alanına düşerse
   o kişi bildirimde etiketlenir.
 
-Grup komutları (bot yanıtları bir sonraki çalışmada, en geç ~30 dk içinde gelir):
+Grup komutları (bot yanıtları bir sonraki çalışmada, en geç ~10 dk içinde gelir):
   /kur                      -> (yalnızca bot sahibi) bu grubu bildirim grubu yapar
   /alan 421-429 513-521     -> alan ekler (X aralığı, Y aralığı)
   /alan 421|513 429|521     -> aynı alan, köşe biçimiyle
@@ -24,7 +24,7 @@ sahibinin kendi özel sohbet ID'sidir (= Telegram kullanıcı ID'si).
 
 Komutlar:
   python barbar_izle.py bir-kez   -> Bir tur çalışır (GitHub Actions bunu kullanır)
-  python barbar_izle.py           -> Bilgisayarda sürekli çalışır (30 dk aralıkla)
+  python barbar_izle.py           -> Bilgisayarda sürekli çalışır (10 dk aralıkla)
 """
 import gzip
 import html
@@ -50,7 +50,8 @@ VARSAYILAN_AYAR = {
     "min_puan": 0,          # bu puanın altındaki barbar köyleri yok sayılır
     "kisi_basi_max_alan": 10,
 }
-INDIRME_ARALIGI_SN = 55 * 60   # Klanlar listeyi saatte bir günceller; daha sık indirmiyoruz
+INDIRME_ARALIGI_SN = 55 * 60   # sürüm bilgisi alınamazsa en fazla saatte bir indir
+UA = "barbar-izle/2.1 (kisisel kullanim)"
 MESAJ_SINIRI = 3800            # Telegram sınırı 4096
 
 
@@ -73,17 +74,26 @@ def durum_yaz(durum):
 # --------------------------------------------------------------------------- #
 # Köy verisi
 # --------------------------------------------------------------------------- #
+def liste_surumu(dunya):
+    """Listeyi indirmeden yalnızca sürüm bilgisini (Last-Modified / ETag) sorar."""
+    url = dunya.rstrip("/") + "/map/village.txt.gz"
+    istek = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+    with urllib.request.urlopen(istek, timeout=30) as r:
+        return r.headers.get("Last-Modified") or r.headers.get("ETag")
+
+
 def koyleri_indir(dunya):
     """village.txt satırları: id,ad,x,y,oyuncu_id,puan,bonus"""
     url = dunya.rstrip("/") + "/map/village.txt.gz"
-    istek = urllib.request.Request(url, headers={"User-Agent": "barbar-izle/2.0 (kisisel kullanim)"})
+    istek = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(istek, timeout=60) as r:
         ham = r.read()
+        surum = r.headers.get("Last-Modified") or r.headers.get("ETag")
     try:
         metin = gzip.decompress(ham).decode("utf-8")
     except OSError:
         metin = ham.decode("utf-8")
-    return koyleri_ayristir(metin)
+    return koyleri_ayristir(metin), surum
 
 
 def koyleri_ayristir(metin):
@@ -174,8 +184,8 @@ YARDIM = (
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarını gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
-    "⏱️ Komutlara en geç ~30 dakika içinde yanıt veririm. "
-    "Köy listesi saatte bir güncellenir."
+    "⏱️ Komutlara en geç ~10 dakika içinde yanıt veririm. "
+    "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 10 dk sonra bildiririm."
 )
 
 
@@ -210,7 +220,7 @@ def komutlari_isle(tg, durum, ayar):
                 if uid in durum.get("kisiler", {}):
                     durum["kisiler"][uid]["ad"] = kimden.get("first_name") or "Kurucu"
                 tg.gonder(chat_id, "✅ Bu grup bildirim grubu olarak ayarlandı.\n\n" + YARDIM, mid)
-                print(f"[{zaman()}] Grup kuruldu: {chat_id}")
+                print(f"[{zaman()}] Bildirim grubu kuruldu.")
             continue
 
         # Diğer komutlar yalnızca kayıtlı grupta (ya da grup yoksa sahibin özelinde) geçerli
@@ -259,14 +269,24 @@ def komutlari_isle(tg, durum, ayar):
 # Barbar taraması
 # --------------------------------------------------------------------------- #
 def barbarlari_tara(tg, durum, ayar):
-    if time.time() - durum.get("son_indirme", 0) < INDIRME_ARALIGI_SN:
-        return True  # liste henüz güncellenmedi, indirmeye gerek yok
+    # Liste değişmediyse indirme (sunucuyu gereksiz yere yormamak için)
     try:
-        koyler = koyleri_indir(ayar["dunya"])
+        surum = liste_surumu(ayar["dunya"])
+    except Exception as e:
+        print(f"[{zaman()}] Liste sürümü sorulamadı: {e}")
+        surum = None
+    if surum and surum == durum.get("liste_surumu"):
+        print(f"[{zaman()}] Köy listesi değişmemiş, indirilmedi.")
+        return True
+    if not surum and time.time() - durum.get("son_indirme", 0) < INDIRME_ARALIGI_SN:
+        return True
+    try:
+        koyler, surum = koyleri_indir(ayar["dunya"])
     except Exception as e:
         print(f"[{zaman()}] Köy listesi indirilemedi: {e}")
         return False
     durum["son_indirme"] = int(time.time())
+    durum["liste_surumu"] = surum
 
     barbarlar = {k["id"]: k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]}
     hedef = durum.get("grup_id") or tg.sahip_id
@@ -333,10 +353,10 @@ def main():
         if komut == "bir-kez":
             sys.exit(0 if tek_tur() else 1)
         elif komut == "izle":
-            print("Barbar izleme başladı (30 dk aralıkla). Durdurmak için Ctrl+C.")
+            print("Barbar izleme başladı (10 dk aralıkla). Durdurmak için Ctrl+C.")
             while True:
                 tek_tur()
-                time.sleep(30 * 60)
+                time.sleep(10 * 60)
         else:
             print(__doc__)
     except KeyboardInterrupt:

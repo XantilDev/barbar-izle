@@ -2,13 +2,14 @@ name: Barbar izleyici
 
 on:
   schedule:
-    - cron: "7,37 * * * *"   # 30 dakikada bir: komutlara yanıt; köy listesi saatte bir indirilir
-  workflow_dispatch:       # Actions sekmesinden elle çalıştırmak için
+    - cron: "*/10 * * * *"   # 10 dakikada bir (GitHub bazen birkaç dakika geciktirebilir)
+  workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için
   push:
-    paths: ["barbar.json", "barbar_izle.py", ".github/workflows/barbar.yml"]  # ayar değişince hemen çalış
+    branches: [main]
+    paths: ["barbar.json", "barbar_izle.py", ".github/workflows/barbar.yml"]
 
 permissions:
-  contents: write          # barbar_durum.json'u depoya geri kaydetmek için
+  contents: write            # yalnızca ayda bir "canlı tutma" commit'i için
 
 concurrency:
   group: barbar
@@ -25,17 +26,55 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Durum (arkadaş alanları, Telegram ID'leri, bilinen köyler) depoya yazılmaz:
+      # şifrelenip GitHub önbelleğinde saklanır. Anahtar, gizli TELEGRAM_TOKEN'dır.
+      - name: Durumu geri yükle
+        uses: actions/cache/restore@v4
+        with:
+          path: durum.enc
+          key: barbar-durum-${{ github.run_id }}
+          restore-keys: barbar-durum-
+
+      - name: Durumu çöz
+        env:
+          ANAHTAR: ${{ secrets.TELEGRAM_TOKEN }}
+        run: |
+          if [ -f durum.enc ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:ANAHTAR \
+              -in durum.enc -out barbar_durum.json
+          fi
+
       - name: Tara ve bildir
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python barbar_izle.py bir-kez
 
-      - name: Durumu kaydet
+      - name: Durumu şifrele
+        if: always()
+        env:
+          ANAHTAR: ${{ secrets.TELEGRAM_TOKEN }}
         run: |
-          git config user.name "barbar-bot"
-          git config user.email "barbar-bot@users.noreply.github.com"
-          git add barbar_durum.json
-          git diff --cached --quiet || git commit -m "Durum güncellendi"
-          git pull --rebase
-          git push
+          if [ -f barbar_durum.json ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ANAHTAR \
+              -in barbar_durum.json -out durum.enc
+            rm -f barbar_durum.json
+          fi
+
+      - name: Durumu kaydet
+        if: always() && hashFiles('durum.enc') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: durum.enc
+          key: barbar-durum-${{ github.run_id }}
+
+      # Açık depolarda 60 gün hiç commit olmazsa GitHub zamanlamayı durdurur.
+      - name: Canlı tut
+        run: |
+          son=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - son )) -gt $(( 50 * 86400 )) ]; then
+            git config user.name "barbar-bot"
+            git config user.email "barbar-bot@users.noreply.github.com"
+            git commit --allow-empty -m "Canlı tutma"
+            git push
+          fi
