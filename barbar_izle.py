@@ -8,7 +8,7 @@ Klanlar barbar köyü izleyici (Telegram grubu, arkadaş etiketlemeli)
 - Grup üyeleri kendi alanlarını komutla kaydeder; köy birinin alanına düşerse
   o kişi bildirimde etiketlenir.
 
-Grup komutları (bot yanıtları bir sonraki çalışmada, en geç ~10 dk içinde gelir):
+Grup komutları (bot yanıtları bir sonraki çalışmada, en geç ~5 dk içinde gelir):
   /kur                      -> (yalnızca bot sahibi) bu grubu bildirim grubu yapar
   /alan 421-429 513-521     -> alan ekler (X aralığı, Y aralığı)
   /alan 421|513 429|521     -> aynı alan, köşe biçimiyle
@@ -24,7 +24,7 @@ sahibinin kendi özel sohbet ID'sidir (= Telegram kullanıcı ID'si).
 
 Komutlar:
   python barbar_izle.py bir-kez   -> Bir tur çalışır (GitHub Actions bunu kullanır)
-  python barbar_izle.py           -> Bilgisayarda sürekli çalışır (10 dk aralıkla)
+  python barbar_izle.py           -> Bilgisayarda sürekli çalışır (5 dk aralıkla)
 """
 import gzip
 import html
@@ -184,8 +184,8 @@ YARDIM = (
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarını gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
-    "⏱️ Komutlara en geç ~10 dakika içinde yanıt veririm. "
-    "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 10 dk sonra bildiririm."
+    "⏱️ Komutlara en geç ~5 dakika içinde yanıt veririm. "
+    "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 5 dk sonra bildiririm."
 )
 
 
@@ -353,10 +353,10 @@ def main():
         if komut == "bir-kez":
             sys.exit(0 if tek_tur() else 1)
         elif komut == "izle":
-            print("Barbar izleme başladı (10 dk aralıkla). Durdurmak için Ctrl+C.")
+            print("Barbar izleme başladı (5 dk aralıkla). Durdurmak için Ctrl+C.")
             while True:
                 tek_tur()
-                time.sleep(10 * 60)
+                time.sleep(5 * 60)
         else:
             print(__doc__)
     except KeyboardInterrupt:

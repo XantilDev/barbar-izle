@@ -2,7 +2,7 @@ name: Barbar izleyici
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 10 dakikada bir (GitHub bazen birkaç dakika geciktirebilir)
+    - cron: "*/5 * * * *"    # 5 dakikada bir (GitHub'ın izin verdiği en kısa aralık)
   workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için
   push:
     branches: [main]
