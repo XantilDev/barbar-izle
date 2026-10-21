@@ -216,6 +216,8 @@ YARDIM = (
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarını gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
+    "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
+    "<b>/durum</b> — bot çalışıyor mu, en son ne zaman baktı\n"
     "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
     "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n\n"
     "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
@@ -313,6 +315,10 @@ def komutlari_isle(tg, durum, ayar):
         elif komut == "/alansil":
             kisiler.pop(uid, None)
             tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)
+        elif komut == "/durum":
+            komut_durum(tg, durum, ayar, chat_id, mid)
+        elif komut == "/barbarlar":
+            komut_barbarlar(tg, durum, ayar, chat_id, mid, uid)
         elif komut == "/oyuncu":
             komut_oyuncu(tg, durum, ayar, chat_id, mid, arg)
         elif komut == "/pasifler":
@@ -555,6 +561,65 @@ def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
                                 "(puan, köy, ODA, ODS değişmedi — puana göre sıralı)\n\n", satirlar, mid)
 
 
+def once(ts, simdi):
+    return f"{sure_metni(simdi - ts)} önce" if ts else "henüz yok"
+
+
+def komut_durum(tg, durum, ayar, chat_id, mid):
+    simdi = int(time.time())
+    onceki = durum.get("son_calisma")
+    satirlar = [
+        "🤖 <b>Bot çalışıyor</b>",
+        f"⏱️ Bir önceki çalışma: {once(onceki, simdi)}",
+        f"🗺️ Köy listesi en son indirildi: {once(durum.get('son_indirme'), simdi)}",
+    ]
+    if durum.get("liste_surumu"):
+        try:
+            from email.utils import parsedate_to_datetime
+            yayin = parsedate_to_datetime(durum["liste_surumu"]).astimezone().strftime("%d.%m %H:%M")
+        except Exception:
+            yayin = html.escape(str(durum["liste_surumu"]))
+        satirlar.append(f"📅 Klanlar listeyi en son yayınladı: {yayin}")
+    satirlar += [
+        f"🏚️ Haritada bilinen barbar köyü: <b>{len(durum.get('bilinen', []))}</b>",
+        f"🆕 En son yeni barbar: {once(durum.get('son_yeni_barbar'), simdi)}",
+        f"👥 Takip edilen oyuncu: <b>{len(durum.get('oyuncular', {}))}</b> "
+        f"(takip başlangıcı: {once(durum.get('takip_baslangic'), simdi)})",
+        f"📍 Alan kaydeden kişi: <b>{sum(1 for k in durum.get('kisiler', {}).values() if k['alanlar'])}</b>",
+    ]
+    if onceki and simdi - onceki > 20 * 60:
+        satirlar.append("⚠️ Bir önceki çalışmadan bu yana 20 dakikadan fazla geçmiş — tetikleyici aksıyor olabilir.")
+    tg.gonder(chat_id, "\n".join(satirlar), mid)
+
+
+def komut_barbarlar(tg, durum, ayar, chat_id, mid, uid):
+    kisi = durum.get("kisiler", {}).get(uid)
+    if not kisi or not kisi["alanlar"]:
+        tg.gonder(chat_id, "Kayıtlı alanın yok. Önce: <b>/alan 421-429 513-521</b>", mid)
+        return
+    koyler = TUR.get("koyler")
+    if koyler is None:
+        try:
+            koyler, _ = koyleri_indir(ayar["dunya"])
+        except Exception:
+            tg.gonder(chat_id, "Köy listesine şu an ulaşamadım, biraz sonra tekrar dene.", mid)
+            return
+        TUR["koyler"] = koyler
+    bulunan = sorted((k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]
+                      and any(alanda_mi(k, a) for a in kisi["alanlar"])), key=lambda k: -k["puan"])
+    if not bulunan:
+        tg.gonder(chat_id, f"{etiket(uid, kisi)} alanlarında şu an barbar köyü yok.", mid)
+        return
+    satirlar = []
+    for k in bulunan[:50]:
+        link = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_village&id={k['id']}"
+        satirlar.append(f'📍 <a href="{link}"><b>{k["x"]}|{k["y"]}</b></a> · {nokta(k["puan"])} puan')
+    if len(bulunan) > 50:
+        satirlar.append(f"… ve {len(bulunan) - 50} köy daha")
+    parcali_gonder(tg, chat_id, f"🏚️ {etiket(uid, kisi)} alanlarında <b>{len(bulunan)}</b> barbar köyü:\n\n",
+                   satirlar, mid)
+
+
 def parcali_gonder(tg, hedef, baslik, satirlar, yanit_id=None):
     parca = baslik
     for s in satirlar:
@@ -602,6 +667,8 @@ def barbarlari_tara(tg, durum, ayar):
         return True
 
     yeniler = [barbarlar[i] for i in sorted(set(barbarlar) - set(durum.get("bilinen", [])))]
+    if yeniler:
+        durum["son_yeni_barbar"] = int(time.time())
     # Alınan köyler listeden düşer; tekrar barbara dönerse yine bildirilir
     durum["bilinen"] = sorted(barbarlar)
 
@@ -628,6 +695,7 @@ def barbarlari_tara(tg, durum, ayar):
 
 def tek_tur():
     TUR.clear()
+    TUR["baslangic"] = int(time.time())
     ayar = {**VARSAYILAN_AYAR, **json_oku(AYAR, {})}
     tg = telegram_olustur()
     durum = json_oku(DURUM, {})
@@ -643,6 +711,7 @@ def tek_tur():
         print(f"::notice::Grup test mesajı: {'gönderildi' if ok else 'GÖNDERİLEMEDİ'}")
         durum["grup_test_1"] = True
     basarili = barbarlari_tara(tg, durum, ayar)
+    durum["son_calisma"] = TUR["baslangic"]
     durum_yaz(durum)
     print(f"::notice::Gönderilen mesaj: {TUR.get('gonderilen', 0)}")
     return basarili and not TUR.get("hata")

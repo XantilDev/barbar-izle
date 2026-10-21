@@ -19,6 +19,8 @@ jobs:
   tara:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      TZ: Europe/Istanbul      # mesajlardaki saatler Türkiye saatiyle
     steps:
       - uses: actions/checkout@v4
 
