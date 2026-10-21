@@ -169,9 +169,18 @@ class Telegram:
             veri["allow_sending_without_reply"] = "true"
         try:
             self._istek("sendMessage", veri)
+            TUR["gonderilen"] = TUR.get("gonderilen", 0) + 1
             return True
         except Exception as e:
-            print(f"[{zaman()}] Telegram hatası: {e}")
+            aciklama = str(e)
+            if hasattr(e, "read"):
+                try:
+                    aciklama += " — " + json.loads(e.read().decode()).get("description", "")
+                except Exception:
+                    pass
+            hedef_turu = "grup" if str(chat_id).startswith("-") else "özel sohbet"
+            print(f"::warning::Telegram gönderilemedi ({hedef_turu}): {aciklama}")
+            TUR["hata"] = True
             return False
 
     def guncellemeler(self, offset):
@@ -219,8 +228,23 @@ def komutlari_isle(tg, durum, ayar):
     try:
         guncellemeler = tg.guncellemeler(durum.get("offset"))
     except Exception as e:
-        print(f"[{zaman()}] Komutlar okunamadı: {e}")
+        aciklama = str(e)
+        if hasattr(e, "read"):
+            try:
+                aciklama += " — " + json.loads(e.read().decode()).get("description", "")
+            except Exception:
+                pass
+        print(f"::warning::Telegram komutları okunamadı: {aciklama}")
+        TUR["hata"] = True
         return
+    ozet = {}
+    for u in guncellemeler:
+        m = u.get("message") or {}
+        t = (m.get("text") or "")
+        tur = m.get("chat", {}).get("type", "?")
+        anahtar = f"{tur}:{t.split(' ')[0].split('@')[0] if t.startswith('/') else ('metin' if t else 'diğer')}"
+        ozet[anahtar] = ozet.get(anahtar, 0) + 1
+    print(f"::notice::Telegram güncellemeleri: {len(guncellemeler)} {ozet or ''} | grup kurulu: {'evet' if durum.get('grup_id') else 'hayır'}")
     kisiler = durum.setdefault("kisiler", {})
     for u in guncellemeler:
         durum["offset"] = u["update_id"] + 1
@@ -598,7 +622,8 @@ def tek_tur():
     basarili = barbarlari_tara(tg, durum, ayar)
     oyunculari_guncelle(tg, durum, ayar)
     durum_yaz(durum)
-    return basarili
+    print(f"::notice::Gönderilen mesaj: {TUR.get('gonderilen', 0)}")
+    return basarili and not TUR.get("hata")
 
 
 def main():
