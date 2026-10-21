@@ -3,7 +3,7 @@ name: Barbar izleyici
 on:
   schedule:
     - cron: "*/5 * * * *"    # 5 dakikada bir (GitHub'ın izin verdiği en kısa aralık)
-  workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için
+  workflow_dispatch:         # Actions sekmesinden elle çalıştırmak için (Run workflow)
   push:
     branches: [main]
     paths: ["barbar.json", "barbar_izle.py", ".github/workflows/barbar.yml"]
