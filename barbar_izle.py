@@ -581,7 +581,7 @@ def komut_durum(tg, durum, ayar, chat_id, mid):
             yayin = html.escape(str(durum["liste_surumu"]))
         satirlar.append(f"📅 Klanlar listeyi en son yayınladı: {yayin}")
     satirlar += [
-        f"🏚️ Haritada bilinen barbar köyü: <b>{len(durum.get('bilinen', []))}</b>",
+        f"🏚️ Haritadaki barbar köyü: <b>{durum.get('barbar_sayisi', len(durum.get('bilinen', [])))}</b>",
         f"🆕 En son yeni barbar: {once(durum.get('son_yeni_barbar'), simdi)}",
         f"👥 Takip edilen oyuncu: <b>{len(durum.get('oyuncular', {}))}</b> "
         f"(takip başlangıcı: {once(durum.get('takip_baslangic'), simdi)})",
@@ -633,6 +633,18 @@ def parcali_gonder(tg, hedef, baslik, satirlar, yanit_id=None):
 # --------------------------------------------------------------------------- #
 # Barbar taraması
 # --------------------------------------------------------------------------- #
+def surum_zamani(surum):
+    """Last-Modified başlığını zaman damgasına çevirir; çevrilemezse None."""
+    try:
+        from email.utils import parsedate_to_datetime
+        return int(parsedate_to_datetime(surum).timestamp())
+    except Exception:
+        return None
+
+
+HATIRLAMA_SN = 7 * 86400   # bildirilen barbar köyü 7 gün boyunca tekrar bildirilmez
+
+
 def barbarlari_tara(tg, durum, ayar):
     # Liste değişmediyse indirme (sunucuyu gereksiz yere yormamak için)
     try:
@@ -643,6 +655,11 @@ def barbarlari_tara(tg, durum, ayar):
     if surum and surum == durum.get("liste_surumu"):
         print(f"[{zaman()}] Köy listesi değişmemiş, indirilmedi.")
         return True
+    # Bazı sunucular kısa süre eski listeyi verebiliyor: bildiğimizden eskiyse hiç indirme
+    yeni_zaman = surum_zamani(surum) if surum else None
+    if yeni_zaman and durum.get("liste_zamani") and yeni_zaman < durum["liste_zamani"]:
+        print(f"::notice::Eski köy listesi geldi ({surum}), yok sayıldı.")
+        return True
     if not surum and time.time() - durum.get("son_indirme", 0) < INDIRME_ARALIGI_SN:
         return True
     try:
@@ -650,27 +667,46 @@ def barbarlari_tara(tg, durum, ayar):
     except Exception as e:
         print(f"[{zaman()}] Köy listesi indirilemedi: {e}")
         return False
+    yeni_zaman = surum_zamani(surum) if surum else None
+    if yeni_zaman and durum.get("liste_zamani") and yeni_zaman < durum["liste_zamani"]:
+        print(f"::notice::Eski köy listesi indirildi ({surum}), yok sayıldı.")
+        return True
     durum["son_indirme"] = int(time.time())
     durum["liste_surumu"] = surum
+    if yeni_zaman:
+        durum["liste_zamani"] = yeni_zaman
     TUR["koyler"] = koyler
 
     barbarlar = {k["id"]: k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]}
     hedef = durum.get("grup_id") or tg.sahip_id
     imza = f"{ayar['dunya']}|{ayar['min_puan']}"
 
+    simdi = int(time.time())
+    durum["barbar_sayisi"] = len(barbarlar)
+
     if durum.get("imza") != imza:
         durum["imza"] = imza
-        durum["bilinen"] = sorted(barbarlar)
+        durum["gorulen"] = {str(i): simdi for i in barbarlar}
+        durum.pop("bilinen", None)
         tg.gonder(hedef, f"✅ Barbar izleme başladı. Haritada şu an <b>{len(barbarlar)}</b> barbar köyü var; "
                          "bundan sonra yalnızca yeni çıkanları bildireceğim.\n\nKomutlar için /yardim")
         print(f"[{zaman()}] İlk tarama: {len(barbarlar)} barbar köyü kaydedildi.")
         return True
 
-    yeniler = [barbarlar[i] for i in sorted(set(barbarlar) - set(durum.get("bilinen", [])))]
+    # "gorulen": barbar olarak gördüğümüz her köy ve en son görülme zamanı.
+    # Bir köy, son 7 gün içinde barbar olarak görüldüyse tekrar bildirilmez — böylece
+    # sunucunun arada eski liste vermesi ya da köyün kısa süre el değiştirmesi tekrar üretmez.
+    if "gorulen" not in durum:   # eski sürümden geçiş
+        durum["gorulen"] = {str(i): simdi for i in durum.pop("bilinen", [])}
+    gorulen = durum["gorulen"]
+    yeniler = [barbarlar[i] for i in sorted(barbarlar)
+               if simdi - gorulen.get(str(i), 0) > HATIRLAMA_SN]
+    for i in barbarlar:
+        gorulen[str(i)] = simdi
+    for i in [i for i, t in gorulen.items() if simdi - t > HATIRLAMA_SN]:
+        del gorulen[i]
     if yeniler:
-        durum["son_yeni_barbar"] = int(time.time())
-    # Alınan köyler listeden düşer; tekrar barbara dönerse yine bildirilir
-    durum["bilinen"] = sorted(barbarlar)
+        durum["son_yeni_barbar"] = simdi
 
     satirlar = []
     for k in yeniler:
@@ -684,7 +720,7 @@ def barbarlari_tara(tg, durum, ayar):
             satir += " — " + ", ".join(etiketler)
         satirlar.append((not etiketler, satir))   # etiketliler üstte
 
-    print(f"[{zaman()}] {len(barbarlar)} barbar köyü, {len(yeniler)} yeni, {len(satirlar)} bildirilecek.")
+    print(f"::notice::{len(barbarlar)} barbar köyü, {len(yeniler)} yeni, {len(satirlar)} bildirilecek ({surum}).")
     if not satirlar:
         return True
 
