@@ -161,8 +161,59 @@ def alan_kutusu(a):
     return a["x1"], a["y1"], a["x2"], a["y2"]
 
 
-def harita_ciz(koyler, alanlar):
+RENKLER = {
+    "mavi": (52, 120, 246), "açıkmavi": (120, 205, 255), "lacivert": (35, 55, 150),
+    "sarı": (250, 215, 40), "kırmızı": (210, 40, 40), "pembe": (240, 120, 190),
+    "mor": (150, 90, 220), "turuncu": (255, 145, 30), "yeşil": (150, 235, 90),
+    "beyaz": (245, 245, 245), "siyah": (15, 15, 15),
+}
+BARBAR_RENK, OYUNCU_RENK, ALAN_RENK = (150, 150, 150), (181, 112, 54), (235, 64, 52)
+
+
+def renk_adi_coz(yazi):
+    """'Açık Mavi', 'acikmavi', 'kirmizi' gibi yazımları RENKLER anahtarına çevirir."""
+    y = tr_kucuk(yazi).replace(" ", "")
+    ascii_ = {"acikmavi": "açıkmavi", "sari": "sarı", "kirmizi": "kırmızı", "yesil": "yeşil"}
+    y = ascii_.get(y, y)
+    return y if y in RENKLER else None
+
+
+def klan_anahtari(yazi):
+    """'UDW 54', 'UDW-54', 'udw54' aynı klanı göstersin."""
+    return re.sub(r"[\s\-_.]", "", tr_kucuk(yazi or ""))
+
+
+def boyama_hazirla(ayar, durum):
+    """Köy -> (renk, açıklama) eşlemesi yapan fonksiyon döndürür.
+    Öncelik: gruptaki birinin /nick ile bağladığı köyler (sarı) > klan rengi > varsayılan."""
+    oyuncular = durum.get("oyuncular", {})
+    kayitli = {**{klan_anahtari(k): v for k, v in ayar.get("klan_renkleri", {}).items()},
+               **durum.get("klan_renkleri", {})}
+    klan_renk = {}
+    for kid, tag in durum.get("klanlar", {}).items():
+        ad = durum.get("klan_adlari", {}).get(kid, "")
+        renk = kayitli.get(klan_anahtari(tag)) or (kayitli.get(klan_anahtari(ad)) if ad else None)
+        if renk in RENKLER:
+            klan_renk[kid] = (RENKLER[renk], tag)
+    nickler = {str(k["oyuncu_id"]) for k in durum.get("kisiler", {}).values() if k.get("oyuncu_id")}
+
+    def boya(k):
+        if k["oyuncu"] == 0:
+            return BARBAR_RENK, "Barbar"
+        pid = str(k["oyuncu"])
+        if pid in nickler:
+            return RENKLER["sarı"], "Grup üyeleri"
+        o = oyuncular.get(pid)
+        if o and str(o.get("kl", 0)) in klan_renk:
+            return klan_renk[str(o["kl"])]
+        return OYUNCU_RENK, "Diğer oyuncular"
+    return boya
+
+
+def harita_ciz(koyler, alanlar, boya=None):
     """Alanları ve çevresindeki köyleri çizer; PNG bayt döner (Pillow yoksa None)."""
+    if boya is None:
+        boya = lambda k: (BARBAR_RENK, "Barbar") if k["oyuncu"] == 0 else (OYUNCU_RENK, "Oyuncu")
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
@@ -185,14 +236,48 @@ def harita_ciz(koyler, alanlar):
     gen, yuk = x2 - x1 + 1, y2 - y1 + 1
     hucre = max(6, min(28, 700 // max(gen, yuk)))
     sol, ust = 44, 52
-    W, H = sol + gen * hucre + 12, ust + yuk * hucre + 36
+    W = sol + gen * hucre + 12
+
+    # Görünen köylerin renkleri ve gösterge öğeleri
+    gorunen, gosterge = [], {}
+    for k in koyler:
+        if x1 <= k["x"] <= x2 and y1 <= k["y"] <= y2:
+            renk, yazi = boya(k)
+            gorunen.append((k, renk))
+            gosterge.setdefault(yazi, renk)
+    sira = ["Grup üyeleri"]
+    ogeler = sorted(gosterge.items(), key=lambda t: (t[0] not in sira, t[0] in ("Diğer oyuncular", "Oyuncu"),
+                                                      t[0] == "Barbar", t[0]))
+    ogeler.append(("Alan", ALAN_RENK))
+    # Göstergeyi satırlara yerleştir
+    satirlar, x_simdi, satir = [], sol, []
+    for yazi, renk in ogeler:
+        gen_oge = 22 + 8 * len(yazi) + 18
+        if satir and x_simdi + gen_oge > W - 8:
+            satirlar.append(satir)
+            satir, x_simdi = [], sol
+        satir.append((x_simdi, yazi, renk))
+        x_simdi += gen_oge
+    satirlar.append(satir)
+    H = ust + yuk * hucre + 14 + 22 * len(satirlar)
+
     img = Image.new("RGB", (W, H), (34, 40, 49))
     d = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.load_default(size=13)
-        kucuk = ImageFont.load_default(size=11)
-    except TypeError:
-        font = kucuk = ImageFont.load_default()
+    font = kucuk = None
+    for yol in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf", "DejaVuSans.ttf"):
+        try:
+            font, kucuk = ImageFont.truetype(yol, 13), ImageFont.truetype(yol, 11)
+            break
+        except OSError:
+            continue
+    turkce = font is not None
+    if not turkce:
+        try:
+            font, kucuk = ImageFont.load_default(size=13), ImageFont.load_default(size=11)
+        except TypeError:
+            font = kucuk = ImageFont.load_default()
+    sade = lambda t: t if turkce else t.translate(str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU"))
 
     def px(x, y):
         return sol + (x - x1) * hucre, ust + (y - y1) * hucre
@@ -210,30 +295,31 @@ def harita_ciz(koyler, alanlar):
             d.line([sol, Y, sol + gen * hucre, Y], fill=(92, 128, 72), width=1)
             d.text((4, Y + 1), str(y), fill=(200, 200, 200), font=kucuk)
 
-    for k in koyler:
-        if x1 <= k["x"] <= x2 and y1 <= k["y"] <= y2:
-            X, Y = px(k["x"], k["y"])
-            renk = (150, 150, 150) if k["oyuncu"] == 0 else (181, 112, 54)
-            m = max(1, hucre // 6)
-            d.rectangle([X + m, Y + m, X + hucre - m - 1, Y + hucre - m - 1], fill=renk)
+    m = max(1, hucre // 6)
+    for k, renk in gorunen:
+        X, Y = px(k["x"], k["y"])
+        d.rectangle([X + m, Y + m, X + hucre - m - 1, Y + hucre - m - 1], fill=renk,
+                    outline=(25, 25, 25) if hucre >= 10 else None)
 
     for a in alanlar:
         if a["tip"] == "daire":
             cx, cy = px(a["x"], a["y"])
             cx, cy, r = cx + hucre / 2, cy + hucre / 2, (a["r"] + 0.5) * hucre
-            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(235, 64, 52), width=3)
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=ALAN_RENK, width=3)
         else:
             X1, Y1 = px(a["x1"], a["y1"])
             X2, Y2 = px(a["x2"] + 1, a["y2"] + 1)
-            d.rectangle([X1, Y1, X2, Y2], outline=(235, 64, 52), width=3)
+            d.rectangle([X1, Y1, X2, Y2], outline=ALAN_RENK, width=3)
 
     # Gösterge
-    gy = H - 26
-    for i, (renk, yazi) in enumerate([((150, 150, 150), "Barbar"), ((181, 112, 54), "Oyuncu"),
-                                       ((235, 64, 52), "Alan")]):
-        gx = sol + i * 110
-        d.rectangle([gx, gy, gx + 12, gy + 12], fill=renk)
-        d.text((gx + 18, gy - 1), yazi, fill=(220, 220, 220), font=font)
+    for i, satir in enumerate(satirlar):
+        gy = ust + yuk * hucre + 12 + 22 * i
+        for gx, yazi, renk in satir:
+            if yazi == "Alan":
+                d.rectangle([gx, gy, gx + 12, gy + 12], outline=renk, width=2)
+            else:
+                d.rectangle([gx, gy, gx + 12, gy + 12], fill=renk)
+            d.text((gx + 18, gy - 1), sade(yazi), fill=(220, 220, 220), font=font)
     d.text((sol, 8), f"X {x1}-{x2}   Y {y1}-{y2}", fill=(230, 230, 230), font=font)
 
     import io
@@ -260,7 +346,7 @@ def koyleri_al(ayar):
     return koyler
 
 
-def haritali_gonder(tg, ayar, chat_id, metin, alanlar, mid):
+def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid):
     """Metni alan haritasıyla birlikte gönderir; harita çizilemezse yalnızca metin."""
     koyler = koyleri_al(ayar)
     sayac = {"b": 0, "o": 0}
@@ -269,7 +355,7 @@ def haritali_gonder(tg, ayar, chat_id, metin, alanlar, mid):
             sayac["b" if k["oyuncu"] == 0 else "o"] += 1
     metin += (f"\n🏚️ İçinde {sayac['b']} barbar · 🏠 {sayac['o']} oyuncu köyü"
               f'\n🗺️ <a href="{harita_linki(ayar, alanlar)}">Oyun haritasında aç</a>')
-    png = harita_ciz(koyler, alanlar) if koyler else None
+    png = harita_ciz(koyler, alanlar, boyama_hazirla(ayar, durum)) if koyler else None
     if png:
         tg.foto_gonder(chat_id, png, metin, mid)
     else:
@@ -395,6 +481,9 @@ YARDIM = (
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
     "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
     "<b>/durum</b> — bot çalışıyor mu, en son ne zaman baktı\n"
+    "<b>/nick OyunAdın</b> — köylerin haritada sarı görünsün\n"
+    "<b>/klanrenk UDW mavi</b> — klanın köylerini o renge boya\n"
+    "<b>/harita 421|513 429|521</b> — herhangi bir bölgenin haritası\n"
     "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
     "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n\n"
     "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
@@ -478,7 +567,7 @@ def komutlari_isle(tg, durum, ayar):
             if alan["tip"] == "dikdortgen" and alan_buyuklugu(alan) > 50 * 50:
                 uyari = ("\n⚠️ Bu çok büyük bir alan. Yanlışsa <b>/alansil</b> yazıp tekrar ekle. "
                          "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
-            haritali_gonder(tg, ayar, chat_id,
+            haritali_gonder(tg, ayar, durum, chat_id,
                             f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", [alan], mid)
         elif komut == "/alanlarim":
             kisi = kisiler.get(uid)
@@ -486,7 +575,7 @@ def komutlari_isle(tg, durum, ayar):
                 tg.gonder(chat_id, "Kayıtlı alanın yok. Eklemek için: <b>/alan 421-429 513-521</b>", mid)
             else:
                 satirlar = "\n".join(f"• {alan_metni(a)}" for a in kisi["alanlar"])
-                haritali_gonder(tg, ayar, chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}",
+                haritali_gonder(tg, ayar, durum, chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}",
                                 kisi["alanlar"], mid)
         elif komut == "/alansil":
             kisiler.pop(uid, None)
@@ -495,6 +584,16 @@ def komutlari_isle(tg, durum, ayar):
             komut_durum(tg, durum, ayar, chat_id, mid)
         elif komut == "/barbarlar":
             komut_barbarlar(tg, durum, ayar, chat_id, mid, uid)
+        elif komut == "/nick":
+            komut_nick(tg, durum, ayar, chat_id, mid, uid, kimden, arg)
+        elif komut == "/klanrenk":
+            komut_klanrenk(tg, durum, ayar, chat_id, mid, arg)
+        elif komut == "/harita":
+            alan = alan_coz(arg)
+            if alan is None:
+                tg.gonder(chat_id, "Örnek: <b>/harita 421|513 429|521</b> ya da <b>/harita 425|517 10</b>", mid)
+            else:
+                haritali_gonder(tg, ayar, durum, chat_id, f"🗺️ <b>{alan_metni(alan)}</b>", [alan], mid)
         elif komut == "/oyuncu":
             komut_oyuncu(tg, durum, ayar, chat_id, mid, arg)
         elif komut == "/pasifler":
@@ -576,6 +675,7 @@ def oyunculari_guncelle(tg, durum, ayar):
     oda = {p[1]: int(p[2]) for p in satirlar_csv(oda_txt) if p[2].isdigit()}
     ods = {p[1]: int(p[2]) for p in satirlar_csv(ods_txt) if p[2].isdigit()}
     durum["klanlar"] = {p[0]: urllib.parse.unquote_plus(p[2]) for p in satirlar_csv(klan_txt)}
+    durum["klan_adlari"] = {p[0]: urllib.parse.unquote_plus(p[1]) for p in satirlar_csv(klan_txt)}
 
     simdi = int(time.time())
     durum.setdefault("takip_baslangic", simdi)
@@ -735,6 +835,87 @@ def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
         satirlar.append(f"… ve {len(pasifler) - 60} oyuncu daha")
     parcali_gonder(tg, chat_id, f"😴 <b>{gun} gündür gelişmeyen {len(pasifler)} oyuncu</b>\n"
                                 "(puan, köy, ODA, ODS değişmedi — puana göre sıralı)\n\n", satirlar, mid)
+
+
+def oyuncu_ara(durum, sorgu):
+    oyuncular = durum.get("oyuncular", {})
+    q = tr_kucuk(sorgu.strip())
+    tam = [pid for pid, o in oyuncular.items() if tr_kucuk(o["n"]) == q]
+    return tam or [pid for pid, o in oyuncular.items() if q in tr_kucuk(o["n"])]
+
+
+def komut_nick(tg, durum, ayar, chat_id, mid, uid, kimden, arg):
+    kisi = durum.setdefault("kisiler", {}).setdefault(uid, {"alanlar": []})
+    kisi["ad"] = kimden.get("first_name") or kimden.get("username") or kisi.get("ad") or "üye"
+    sorgu = arg.strip()
+    if not sorgu:
+        mevcut = durum.get("oyuncular", {}).get(str(kisi.get("oyuncu_id")))
+        if mevcut:
+            tg.gonder(chat_id, f"Oyundaki adın: {oyuncu_linki(ayar, kisi['oyuncu_id'], mevcut)}. "
+                               "Değiştirmek için <b>/nick YeniAd</b>, kaldırmak için <b>/nick sil</b>.", mid)
+        else:
+            tg.gonder(chat_id, "Örnek: <b>/nick OyunAdın</b>", mid)
+        return
+    if tr_kucuk(sorgu) == "sil":
+        kisi.pop("oyuncu_id", None)
+        tg.gonder(chat_id, "🗑️ Oyun adın kaldırıldı.", mid)
+        return
+    if not durum.get("oyuncular"):
+        tg.gonder(chat_id, "Oyuncu listesi henüz yüklenmedi, biraz sonra tekrar dene.", mid)
+        return
+    bulunan = oyuncu_ara(durum, sorgu)
+    if not bulunan:
+        tg.gonder(chat_id, f"“{html.escape(sorgu)}” adında oyuncu bulamadım. Oyundaki adını tam yaz.", mid)
+        return
+    if len(bulunan) > 1 and not any(tr_kucuk(durum["oyuncular"][p]["n"]) == tr_kucuk(sorgu) for p in bulunan):
+        liste = "\n".join(f"• {html.escape(durum['oyuncular'][p]['n'])}" for p in bulunan[:10])
+        tg.gonder(chat_id, f"Birden fazla oyuncu var, tam adını yaz:\n{liste}", mid)
+        return
+    pid = bulunan[0]
+    o = durum["oyuncular"][pid]
+    kisi["oyuncu_id"] = int(pid)
+    tg.gonder(chat_id, f"✅ {etiket(uid, kisi)} oyundaki adın: {oyuncu_linki(ayar, pid, o)}"
+                       f"{klan_metni(ayar, durum, o)} · {o['k']} köy\nHaritalarda köylerin 🟨 sarı görünecek.", mid)
+
+
+def komut_klanrenk(tg, durum, ayar, chat_id, mid, arg):
+    renkler_listesi = ", ".join(RENKLER)
+    kelimeler = arg.split()
+    kayitli = {**{klan_anahtari(k): v for k, v in ayar.get("klan_renkleri", {}).items()},
+               **durum.get("klan_renkleri", {})}
+    if not kelimeler:
+        etiketler = {klan_anahtari(t): t for t in durum.get("klanlar", {}).values()}
+        satirlar = [f"• {html.escape(etiketler.get(k, k))} → {v}" for k, v in kayitli.items() if v in RENKLER]
+        tg.gonder(chat_id, "🎨 <b>Klan renkleri</b>\n" + ("\n".join(satirlar) or "(henüz yok)") +
+                           f"\n\nRenkler: {renkler_listesi}\n"
+                           "Örnek: <b>/klanrenk UDW mavi</b> · kaldırmak için <b>/klanrenk UDW sil</b>", mid)
+        return
+    # Renk son bir ya da iki kelime olabilir ("açık mavi")
+    renk, klan = None, None
+    for n in (2, 1):
+        if len(kelimeler) > n:
+            aday = " ".join(kelimeler[-n:])
+            if tr_kucuk(aday) == "sil" or renk_adi_coz(aday):
+                renk = "sil" if tr_kucuk(aday) == "sil" else renk_adi_coz(aday)
+                klan = " ".join(kelimeler[:-n])
+                break
+    if not renk:
+        tg.gonder(chat_id, f"Renk anlaşılamadı. Kullanılabilir renkler: {renkler_listesi}\n"
+                           "Örnek: <b>/klanrenk UDW mavi</b>", mid)
+        return
+    anahtar = klan_anahtari(klan)
+    eslesen = [t for kid, t in durum.get("klanlar", {}).items()
+               if klan_anahtari(t) == anahtar or klan_anahtari(durum.get("klan_adlari", {}).get(kid, "")) == anahtar]
+    renkler = durum.setdefault("klan_renkleri", {})
+    if renk == "sil":
+        renkler[anahtar] = None
+        tg.gonder(chat_id, f"🗑️ {html.escape(klan)} klanının rengi kaldırıldı.", mid)
+        return
+    renkler[anahtar] = renk
+    uyari = "" if eslesen else ("\n⚠️ Bu adda bir klan şu an listede yok; adı ya da etiketi oyundaki gibi yazdığından "
+                                "emin ol. Klan kurulursa renk yine de uygulanır.")
+    tg.gonder(chat_id, f"🎨 <b>{html.escape(eslesen[0] if eslesen else klan)}</b> köyleri haritalarda "
+                       f"<b>{renk}</b> görünecek.{uyari}", mid)
 
 
 def once(ts, simdi):

@@ -4,6 +4,16 @@
   "min_puan": 0,
   "kisi_basi_max_alan": 10,
   "sahip_alanlari": [
-    {"tip": "dikdortgen", "x1": 421, "x2": 429, "y1": 513, "y2": 521}
-  ]
+    {
+      "tip": "dikdortgen",
+      "x1": 421,
+      "x2": 429,
+      "y1": 513,
+      "y2": 521
+    }
+  ],
+  "klan_renkleri": {
+    "UDW": "mavi",
+    "UDW-54": "açıkmavi"
+  }
 }
