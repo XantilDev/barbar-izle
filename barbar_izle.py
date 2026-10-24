@@ -183,9 +183,9 @@ def klan_anahtari(yazi):
     return re.sub(r"[\s\-_.]", "", tr_kucuk(yazi or ""))
 
 
-def boyama_hazirla(ayar, durum):
+def boyama_hazirla(ayar, durum, uid=None):
     """Köy -> (renk, açıklama) eşlemesi yapan fonksiyon döndürür.
-    Öncelik: gruptaki birinin /nick ile bağladığı köyler (sarı) > klan rengi > varsayılan."""
+    Öncelik: haritayı isteyen kişinin /nick ile bağladığı köyler (sarı) > klan rengi > varsayılan."""
     oyuncular = durum.get("oyuncular", {})
     kayitli = {**{klan_anahtari(k): v for k, v in ayar.get("klan_renkleri", {}).items()},
                **durum.get("klan_renkleri", {})}
@@ -195,14 +195,15 @@ def boyama_hazirla(ayar, durum):
         renk = kayitli.get(klan_anahtari(tag)) or (kayitli.get(klan_anahtari(ad)) if ad else None)
         if renk in RENKLER:
             klan_renk[kid] = (RENKLER[renk], tag)
-    nickler = {str(k["oyuncu_id"]) for k in durum.get("kisiler", {}).values() if k.get("oyuncu_id")}
+    benim = durum.get("kisiler", {}).get(str(uid), {}).get("oyuncu_id") if uid else None
+    benim = str(benim) if benim else None
 
     def boya(k):
         if k["oyuncu"] == 0:
             return BARBAR_RENK, "Barbar"
         pid = str(k["oyuncu"])
-        if pid in nickler:
-            return RENKLER["sarı"], "Grup üyeleri"
+        if pid == benim:
+            return RENKLER["sarı"], "Senin köylerin"
         o = oyuncular.get(pid)
         if o and str(o.get("kl", 0)) in klan_renk:
             return klan_renk[str(o["kl"])]
@@ -245,7 +246,7 @@ def harita_ciz(koyler, alanlar, boya=None):
             renk, yazi = boya(k)
             gorunen.append((k, renk))
             gosterge.setdefault(yazi, renk)
-    sira = ["Grup üyeleri"]
+    sira = ["Senin köylerin"]
     ogeler = sorted(gosterge.items(), key=lambda t: (t[0] not in sira, t[0] in ("Diğer oyuncular", "Oyuncu"),
                                                       t[0] == "Barbar", t[0]))
     ogeler.append(("Alan", ALAN_RENK))
@@ -346,7 +347,7 @@ def koyleri_al(ayar):
     return koyler
 
 
-def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid):
+def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid, uid=None):
     """Metni alan haritasıyla birlikte gönderir; harita çizilemezse yalnızca metin."""
     koyler = koyleri_al(ayar)
     sayac = {"b": 0, "o": 0}
@@ -355,7 +356,7 @@ def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid):
             sayac["b" if k["oyuncu"] == 0 else "o"] += 1
     metin += (f"\n🏚️ İçinde {sayac['b']} barbar · 🏠 {sayac['o']} oyuncu köyü"
               f'\n🗺️ <a href="{harita_linki(ayar, alanlar)}">Oyun haritasında aç</a>')
-    png = harita_ciz(koyler, alanlar, boyama_hazirla(ayar, durum)) if koyler else None
+    png = harita_ciz(koyler, alanlar, boyama_hazirla(ayar, durum, uid)) if koyler else None
     if png:
         tg.foto_gonder(chat_id, png, metin, mid)
     else:
@@ -481,7 +482,7 @@ YARDIM = (
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
     "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
     "<b>/durum</b> — bot çalışıyor mu, en son ne zaman baktı\n"
-    "<b>/nick OyunAdın</b> — köylerin haritada sarı görünsün\n"
+    "<b>/nick OyunAdın</b> — senin istediğin haritalarda köylerin sarı görünsün\n"
     "<b>/klanrenk UDW mavi</b> — klanın köylerini o renge boya\n"
     "<b>/harita 421|513 429|521</b> — herhangi bir bölgenin haritası\n"
     "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
@@ -568,7 +569,7 @@ def komutlari_isle(tg, durum, ayar):
                 uyari = ("\n⚠️ Bu çok büyük bir alan. Yanlışsa <b>/alansil</b> yazıp tekrar ekle. "
                          "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
             haritali_gonder(tg, ayar, durum, chat_id,
-                            f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", [alan], mid)
+                            f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", [alan], mid, uid)
         elif komut == "/alanlarim":
             kisi = kisiler.get(uid)
             if not kisi or not kisi["alanlar"]:
@@ -576,7 +577,7 @@ def komutlari_isle(tg, durum, ayar):
             else:
                 satirlar = "\n".join(f"• {alan_metni(a)}" for a in kisi["alanlar"])
                 haritali_gonder(tg, ayar, durum, chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}",
-                                kisi["alanlar"], mid)
+                                kisi["alanlar"], mid, uid)
         elif komut == "/alansil":
             kisiler.pop(uid, None)
             tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)
@@ -593,7 +594,7 @@ def komutlari_isle(tg, durum, ayar):
             if alan is None:
                 tg.gonder(chat_id, "Örnek: <b>/harita 421|513 429|521</b> ya da <b>/harita 425|517 10</b>", mid)
             else:
-                haritali_gonder(tg, ayar, durum, chat_id, f"🗺️ <b>{alan_metni(alan)}</b>", [alan], mid)
+                haritali_gonder(tg, ayar, durum, chat_id, f"🗺️ <b>{alan_metni(alan)}</b>", [alan], mid, uid)
         elif komut == "/oyuncu":
             komut_oyuncu(tg, durum, ayar, chat_id, mid, arg)
         elif komut == "/pasifler":
@@ -875,7 +876,7 @@ def komut_nick(tg, durum, ayar, chat_id, mid, uid, kimden, arg):
     o = durum["oyuncular"][pid]
     kisi["oyuncu_id"] = int(pid)
     tg.gonder(chat_id, f"✅ {etiket(uid, kisi)} oyundaki adın: {oyuncu_linki(ayar, pid, o)}"
-                       f"{klan_metni(ayar, durum, o)} · {o['k']} köy\nHaritalarda köylerin 🟨 sarı görünecek.", mid)
+                       f"{klan_metni(ayar, durum, o)} · {o['k']} köy\nSenin istediğin haritalarda köylerin 🟨 sarı görünecek.", mid)
 
 
 def komut_klanrenk(tg, durum, ayar, chat_id, mid, arg):
