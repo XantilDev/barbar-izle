@@ -146,12 +146,134 @@ def alan_metni(a):
         return f"{a['x']}|{a['y']} çevresi, {a['r']} alan yarıçap"
     g, y = a["x2"] - a["x1"] + 1, a["y2"] - a["y1"] + 1
     return (f"X {a['x1']}–{a['x2']}, Y {a['y1']}–{a['y2']} "
-            f"(köşeler {a['x1']}|{a['y1']} ve {a['x2']}|{a['y2']}, {g}×{y} alan)")
+            f"(köşeler {a['x1']}|{a['y1']} ve {a['x2']}|{a['y2']}, {g}×{y} = {g * y} alan)")
 
 
 def dikdortgen(x1, x2, y1, y2):
     return {"tip": "dikdortgen", "x1": min(x1, x2), "x2": max(x1, x2),
             "y1": min(y1, y2), "y2": max(y1, y2)}
+
+
+def alan_kutusu(a):
+    """Alanı çevreleyen kutu: (x1, y1, x2, y2)."""
+    if a["tip"] == "daire":
+        return a["x"] - a["r"], a["y"] - a["r"], a["x"] + a["r"], a["y"] + a["r"]
+    return a["x1"], a["y1"], a["x2"], a["y2"]
+
+
+def harita_ciz(koyler, alanlar):
+    """Alanları ve çevresindeki köyleri çizer; PNG bayt döner (Pillow yoksa None)."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        return None
+    kutular = [alan_kutusu(a) for a in alanlar]
+    x1, y1 = min(k[0] for k in kutular), min(k[1] for k in kutular)
+    x2, y2 = max(k[2] for k in kutular), max(k[3] for k in kutular)
+    pay = max(4, int(max(x2 - x1, y2 - y1) * 0.3))
+    x1, y1, x2, y2 = x1 - pay, y1 - pay, x2 + pay, y2 + pay
+    # En az 20×20 alan göster
+    for eks in ("x", "y"):
+        a, b = (x1, x2) if eks == "x" else (y1, y2)
+        if b - a < 20:
+            ek = (20 - (b - a)) // 2 + 1
+            a, b = a - ek, b + ek
+        if eks == "x":
+            x1, x2 = a, b
+        else:
+            y1, y2 = a, b
+    gen, yuk = x2 - x1 + 1, y2 - y1 + 1
+    hucre = max(6, min(28, 700 // max(gen, yuk)))
+    sol, ust = 44, 52
+    W, H = sol + gen * hucre + 12, ust + yuk * hucre + 36
+    img = Image.new("RGB", (W, H), (34, 40, 49))
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.load_default(size=13)
+        kucuk = ImageFont.load_default(size=11)
+    except TypeError:
+        font = kucuk = ImageFont.load_default()
+
+    def px(x, y):
+        return sol + (x - x1) * hucre, ust + (y - y1) * hucre
+
+    d.rectangle([sol, ust, sol + gen * hucre, ust + yuk * hucre], fill=(76, 110, 58))
+    adim = 5 if max(gen, yuk) <= 60 else 10
+    for x in range(x1, x2 + 2):
+        if x % adim == 0:
+            X, _ = px(x, y1)
+            d.line([X, ust, X, ust + yuk * hucre], fill=(92, 128, 72), width=1)
+            d.text((X + 2, ust - 16), str(x), fill=(200, 200, 200), font=kucuk)
+    for y in range(y1, y2 + 2):
+        if y % adim == 0:
+            _, Y = px(x1, y)
+            d.line([sol, Y, sol + gen * hucre, Y], fill=(92, 128, 72), width=1)
+            d.text((4, Y + 1), str(y), fill=(200, 200, 200), font=kucuk)
+
+    for k in koyler:
+        if x1 <= k["x"] <= x2 and y1 <= k["y"] <= y2:
+            X, Y = px(k["x"], k["y"])
+            renk = (150, 150, 150) if k["oyuncu"] == 0 else (181, 112, 54)
+            m = max(1, hucre // 6)
+            d.rectangle([X + m, Y + m, X + hucre - m - 1, Y + hucre - m - 1], fill=renk)
+
+    for a in alanlar:
+        if a["tip"] == "daire":
+            cx, cy = px(a["x"], a["y"])
+            cx, cy, r = cx + hucre / 2, cy + hucre / 2, (a["r"] + 0.5) * hucre
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(235, 64, 52), width=3)
+        else:
+            X1, Y1 = px(a["x1"], a["y1"])
+            X2, Y2 = px(a["x2"] + 1, a["y2"] + 1)
+            d.rectangle([X1, Y1, X2, Y2], outline=(235, 64, 52), width=3)
+
+    # Gösterge
+    gy = H - 26
+    for i, (renk, yazi) in enumerate([((150, 150, 150), "Barbar"), ((181, 112, 54), "Oyuncu"),
+                                       ((235, 64, 52), "Alan")]):
+        gx = sol + i * 110
+        d.rectangle([gx, gy, gx + 12, gy + 12], fill=renk)
+        d.text((gx + 18, gy - 1), yazi, fill=(220, 220, 220), font=font)
+    d.text((sol, 8), f"X {x1}-{x2}   Y {y1}-{y2}", fill=(230, 230, 230), font=font)
+
+    import io
+    tampon = io.BytesIO()
+    img.save(tampon, format="PNG", optimize=True)
+    return tampon.getvalue()
+
+
+def harita_linki(ayar, alanlar):
+    kutular = [alan_kutusu(a) for a in alanlar]
+    cx = (min(k[0] for k in kutular) + max(k[2] for k in kutular)) // 2
+    cy = (min(k[1] for k in kutular) + max(k[3] for k in kutular)) // 2
+    return f"{ayar['dunya'].rstrip('/')}/guest.php?screen=map#{cx};{cy}"
+
+
+def koyleri_al(ayar):
+    koyler = TUR.get("koyler")
+    if koyler is None:
+        try:
+            koyler, _ = koyleri_indir(ayar["dunya"])
+            TUR["koyler"] = koyler
+        except Exception:
+            koyler = []
+    return koyler
+
+
+def haritali_gonder(tg, ayar, chat_id, metin, alanlar, mid):
+    """Metni alan haritasıyla birlikte gönderir; harita çizilemezse yalnızca metin."""
+    koyler = koyleri_al(ayar)
+    sayac = {"b": 0, "o": 0}
+    for k in koyler:
+        if any(alanda_mi(k, a) for a in alanlar):
+            sayac["b" if k["oyuncu"] == 0 else "o"] += 1
+    metin += (f"\n🏚️ İçinde {sayac['b']} barbar · 🏠 {sayac['o']} oyuncu köyü"
+              f'\n🗺️ <a href="{harita_linki(ayar, alanlar)}">Oyun haritasında aç</a>')
+    png = harita_ciz(koyler, alanlar) if koyler else None
+    if png:
+        tg.foto_gonder(chat_id, png, metin, mid)
+    else:
+        tg.gonder(chat_id, metin, mid)
 
 
 def alan_buyuklugu(a):
@@ -215,6 +337,28 @@ class Telegram:
             TUR["hata"] = True
             return False
 
+    def foto_gonder(self, chat_id, png, aciklama, yanit_id=None):
+        """PNG'yi açıklamasıyla gönderir; olmazsa yalnızca metni gönderir."""
+        sinir = "----barbarizle" + str(int(time.time() * 1000))
+        alanlar = {"chat_id": str(chat_id), "caption": aciklama[:1024], "parse_mode": "HTML"}
+        if yanit_id:
+            alanlar["reply_to_message_id"] = str(yanit_id)
+            alanlar["allow_sending_without_reply"] = "true"
+        govde = b""
+        for k, v in alanlar.items():
+            govde += (f"--{sinir}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").encode()
+        govde += (f"--{sinir}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"harita.png\"\r\n"
+                  "Content-Type: image/png\r\n\r\n").encode() + png + f"\r\n--{sinir}--\r\n".encode()
+        istek = urllib.request.Request(f"https://api.telegram.org/bot{self.token}/sendPhoto", data=govde,
+                                       headers={"Content-Type": f"multipart/form-data; boundary={sinir}"})
+        try:
+            urllib.request.urlopen(istek, timeout=60).read()
+            TUR["gonderilen"] = TUR.get("gonderilen", 0) + 1
+            return True
+        except Exception as e:
+            print(f"::warning::Harita gönderilemedi: {e}")
+            return self.gonder(chat_id, aciklama, yanit_id)
+
     def guncellemeler(self, offset):
         veri = {"timeout": 0, "allowed_updates": json.dumps(["message"])}
         if offset:
@@ -247,7 +391,7 @@ YARDIM = (
     "<b>/alan 421|513 429|521</b> — alan ekle (sol üst ve sağ alt köşe)\n"
     "<b>/alan 421-429 513-521</b> — aynı alan, X ve Y aralığı olarak\n"
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
-    "<b>/alanlarim</b> — alanlarını gör\n"
+    "<b>/alanlarim</b> — alanlarını haritasıyla gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
     "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
     "<b>/durum</b> — bot çalışıyor mu, en son ne zaman baktı\n"
@@ -334,14 +478,16 @@ def komutlari_isle(tg, durum, ayar):
             if alan["tip"] == "dikdortgen" and alan_buyuklugu(alan) > 50 * 50:
                 uyari = ("\n⚠️ Bu çok büyük bir alan. Yanlışsa <b>/alansil</b> yazıp tekrar ekle. "
                          "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
-            tg.gonder(chat_id, f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", mid)
+            haritali_gonder(tg, ayar, chat_id,
+                            f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", [alan], mid)
         elif komut == "/alanlarim":
             kisi = kisiler.get(uid)
             if not kisi or not kisi["alanlar"]:
                 tg.gonder(chat_id, "Kayıtlı alanın yok. Eklemek için: <b>/alan 421-429 513-521</b>", mid)
             else:
                 satirlar = "\n".join(f"• {alan_metni(a)}" for a in kisi["alanlar"])
-                tg.gonder(chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}", mid)
+                haritali_gonder(tg, ayar, chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}",
+                                kisi["alanlar"], mid)
         elif komut == "/alansil":
             kisiler.pop(uid, None)
             tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)

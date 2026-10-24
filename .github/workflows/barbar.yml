@@ -28,6 +28,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Harita çizimi için Pillow
+        run: pip install --quiet pillow
+
       # Durum (arkadaş alanları, Telegram ID'leri, bilinen köyler) depoya yazılmaz:
       # şifrelenip GitHub önbelleğinde saklanır. Anahtar, gizli TELEGRAM_TOKEN'dır.
       - name: Durumu geri yükle
