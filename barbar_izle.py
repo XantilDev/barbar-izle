@@ -143,8 +143,40 @@ def alanda_mi(k, a):
 
 def alan_metni(a):
     if a["tip"] == "daire":
-        return f"{a['x']}|{a['y']} çevresi, {a['r']} alan"
-    return f"{a['x1']}|{a['y1']} – {a['x2']}|{a['y2']}"
+        return f"{a['x']}|{a['y']} çevresi, {a['r']} alan yarıçap"
+    g, y = a["x2"] - a["x1"] + 1, a["y2"] - a["y1"] + 1
+    return (f"X {a['x1']}–{a['x2']}, Y {a['y1']}–{a['y2']} "
+            f"(köşeler {a['x1']}|{a['y1']} ve {a['x2']}|{a['y2']}, {g}×{y} alan)")
+
+
+def dikdortgen(x1, x2, y1, y2):
+    return {"tip": "dikdortgen", "x1": min(x1, x2), "x2": max(x1, x2),
+            "y1": min(y1, y2), "y2": max(y1, y2)}
+
+
+def alan_buyuklugu(a):
+    return (a["x2"] - a["x1"] + 1) * (a["y2"] - a["y1"] + 1)
+
+
+def alan_coz(arg):
+    """/alan argümanını çözer. Dört sayı iki şekilde yazılabiliyor:
+      421-429 513-521  -> X aralığı, Y aralığı
+      423-512 429-519  -> iki köşe (423|512 ve 429|519)
+    "|" varsa köşe kabul edilir; yoksa daha küçük alanı veren okuma seçilir
+    (insanlar hemen her zaman küçük bir bölgeyi kasteder)."""
+    sayilar = [int(s) for s in re.findall(r"\d+", arg)]
+    if any(n > 999 for n in sayilar):
+        return None
+    if len(sayilar) == 4:
+        a, b, c, d = sayilar
+        kose = dikdortgen(a, c, b, d)
+        if "|" in arg:
+            return kose
+        aralik = dikdortgen(a, b, c, d)
+        return kose if alan_buyuklugu(kose) < alan_buyuklugu(aralik) else aralik
+    if len(sayilar) == 3 and 1 <= sayilar[2] <= 100:
+        return {"tip": "daire", "x": sayilar[0], "y": sayilar[1], "r": sayilar[2]}
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -212,7 +244,8 @@ def etiket(uid, kisi):
 YARDIM = (
     "🏚️ <b>Barbar köyü botu</b>\n\n"
     "Haritada yeni barbar köyü çıktığında bu gruba yazarım. Köy sizin alanınızdaysa sizi etiketlerim.\n\n"
-    "<b>/alan 421-429 513-521</b> — alan ekle (önce X aralığı, sonra Y aralığı)\n"
+    "<b>/alan 421|513 429|521</b> — alan ekle (sol üst ve sağ alt köşe)\n"
+    "<b>/alan 421-429 513-521</b> — aynı alan, X ve Y aralığı olarak\n"
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarını gör\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
@@ -283,19 +316,12 @@ def komutlari_isle(tg, durum, ayar):
         if komut in ("/yardim", "/start", "/help"):
             tg.gonder(chat_id, YARDIM, mid)
         elif komut == "/alan":
-            sayilar = [int(s) for s in re.findall(r"\d+", arg)]
-            if len(sayilar) == 4:
-                if "|" in arg:   # köşe biçimi: 421|513 429|521
-                    x1, y1, x2, y2 = sayilar
-                else:            # aralık biçimi: 421-429 513-521  (önce X, sonra Y)
-                    x1, x2, y1, y2 = sayilar
-                alan = {"tip": "dikdortgen", "x1": min(x1, x2), "y1": min(y1, y2),
-                        "x2": max(x1, x2), "y2": max(y1, y2)}
-            elif len(sayilar) == 3 and 1 <= sayilar[2] <= 100:
-                alan = {"tip": "daire", "x": sayilar[0], "y": sayilar[1], "r": sayilar[2]}
-            else:
-                tg.gonder(chat_id, "Anlayamadım. Örnek:\n<b>/alan 421-429 513-521</b>  (X aralığı, Y aralığı)\n"
-                                   "<b>/alan 500|500 15</b>", mid)
+            alan = alan_coz(arg)
+            if alan is None:
+                tg.gonder(chat_id, "Anlayamadım. Örnekler:\n"
+                                   "<b>/alan 421-429 513-521</b>  (X aralığı, Y aralığı)\n"
+                                   "<b>/alan 421|513 429|521</b>  (sol üst ve sağ alt köşe)\n"
+                                   "<b>/alan 425|517 10</b>  (köy çevresi, 10 alan)", mid)
                 continue
             kisi = kisiler.setdefault(uid, {"alanlar": []})
             kisi["ad"] = kimden.get("first_name") or kimden.get("username") or "üye"
@@ -304,7 +330,11 @@ def komutlari_isle(tg, durum, ayar):
                                    "Önce /alansil ile temizle.", mid)
                 continue
             kisi["alanlar"].append(alan)
-            tg.gonder(chat_id, f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>", mid)
+            uyari = ""
+            if alan["tip"] == "dikdortgen" and alan_buyuklugu(alan) > 50 * 50:
+                uyari = ("\n⚠️ Bu çok büyük bir alan. Yanlışsa <b>/alansil</b> yazıp tekrar ekle. "
+                         "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
+            tg.gonder(chat_id, f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", mid)
         elif komut == "/alanlarim":
             kisi = kisiler.get(uid)
             if not kisi or not kisi["alanlar"]:
@@ -729,6 +759,30 @@ def barbarlari_tara(tg, durum, ayar):
     return True
 
 
+def alanlari_duzelt(tg, durum):
+    """Eski sürüm '423-512 429-519' gibi köşe yazımlarını X/Y aralığı sanıp dev alanlar
+    kaydediyordu. Bu kayıtları bir kez köşe yorumuyla düzeltir ve gruba bildirir."""
+    if durum.get("alan_duzeltme_1"):
+        return
+    durum["alan_duzeltme_1"] = True
+    satirlar = []
+    for uid, kisi in durum.get("kisiler", {}).items():
+        for i, a in enumerate(kisi.get("alanlar", [])):
+            if a["tip"] != "dikdortgen" or alan_buyuklugu(a) <= 50 * 50:
+                continue
+            # Kayıtta x1..x2 = ilk iki sayı, y1..y2 = son iki sayı; köşe yorumu:
+            kose = dikdortgen(a["x1"], a["y1"], a["x2"], a["y2"])
+            if alan_buyuklugu(kose) < alan_buyuklugu(a):
+                kisi["alanlar"][i] = kose
+                satirlar.append(f"• {etiket(uid, kisi)}: <b>{alan_metni(kose)}</b>")
+    if satirlar:
+        hedef = durum.get("grup_id") or tg.sahip_id
+        tg.gonder(hedef, "🔧 <b>Alan düzeltmesi</b>\nKöşe koordinatı olarak yazılan bazı alanlar yanlışlıkla "
+                         "çok büyük kaydedilmişti, düzelttim:\n" + "\n".join(satirlar) +
+                         "\n\nYanlışsa /alansil yazıp tekrar ekleyebilirsiniz.")
+        print(f"::notice::{len(satirlar)} hatalı alan düzeltildi.")
+
+
 def tek_tur():
     TUR.clear()
     TUR["baslangic"] = int(time.time())
@@ -740,6 +794,7 @@ def tek_tur():
         kisi = durum.setdefault("kisiler", {}).setdefault(tg.sahip_id, {"ad": "Kurucu", "alanlar": []})
         kisi["alanlar"].extend(ayar["sahip_alanlari"])
         durum["sahip_tohumlandi"] = True
+    alanlari_duzelt(tg, durum)
     oyunculari_guncelle(tg, durum, ayar)   # komutlar güncel veriyle yanıtlansın
     komutlari_isle(tg, durum, ayar)
     if durum.get("grup_id") and not durum.get("grup_test_1"):
