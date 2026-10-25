@@ -1,0 +1,13 @@
+name: Misafir harita incelemesi (tek seferlik)
+on:
+  push:
+    branches: [main]
+    paths: ["arac/inceleme.py", ".github/workflows/inceleme.yml"]
+  workflow_dispatch:
+jobs:
+  incele:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 arac/inceleme.py
