@@ -873,7 +873,7 @@ def kisa_sure(durum, o, simdi):
     """'3 gün', '5 sa', '<1 sa'; takip başlangıcından beri değişmediyse sonuna '+' (en az)."""
     sn = simdi - o["d"]
     g = sn // GUN
-    metin = f"{g} gün" if g else (f"{sn // 3600} sa" if sn >= 3600 else "<1 sa")
+    metin = f"{g} gün" if g else (f"{sn // 3600} sa" if sn >= 3600 else "1 sa'ten az")
     return metin + ("+" if o["d"] <= durum.get("takip_baslangic", 0) else "")
 
 
