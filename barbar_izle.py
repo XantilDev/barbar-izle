@@ -183,6 +183,24 @@ def klan_anahtari(yazi):
     return re.sub(r"[\s\-_.]", "", tr_kucuk(yazi or ""))
 
 
+def gevsek_anahtar(yazi):
+    """Benzer görünen karakterleri eşitler: 0/o, 1/l/i/ı — 'anat0l' ≈ 'ANATO1' ≈ 'ANATOL'."""
+    return klan_anahtari(yazi).translate(str.maketrans({"0": "o", "1": "l", "ı": "l", "i": "l"}))
+
+
+def klan_bul(durum, sorgu):
+    """Klan etiketine ya da adına göre klan id listesi döndürür (önce tam, sonra gevşek eşleşme)."""
+    klanlar, adlar = durum.get("klanlar", {}), durum.get("klan_adlari", {})
+    q = klan_anahtari(sorgu)
+    tam = [kid for kid, tag in klanlar.items()
+           if klan_anahtari(tag) == q or klan_anahtari(adlar.get(kid, "")) == q]
+    if tam:
+        return tam
+    g = gevsek_anahtar(sorgu)
+    return [kid for kid, tag in klanlar.items()
+            if gevsek_anahtar(tag) == g or gevsek_anahtar(adlar.get(kid, "")) == g]
+
+
 def boyama_hazirla(ayar, durum, uid=None):
     """Köy -> (renk, açıklama) eşlemesi yapan fonksiyon döndürür.
     Öncelik: haritayı isteyen kişinin /nick ile bağladığı köyler (sarı) > klan rengi > varsayılan."""
@@ -505,7 +523,8 @@ YARDIM = (
     "<b>/klanrenk UDW mavi</b> — klanın köylerini o renge boya\n"
     "<b>/harita 421|513 429|521</b> — herhangi bir bölgenin haritası\n"
     "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
-    "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n\n"
+    "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n"
+    "<b>/pasifler ANATOL</b> — o klanın en pasif 10 oyuncusu\n\n"
     "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
     "⏱️ Komutlara en geç ~5 dakika içinde yanıt veririm. "
     "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 5 dk sonra bildiririm."
@@ -641,8 +660,11 @@ def komutlari_isle(tg, durum, ayar):
         elif komut == "/oyuncu":
             komut_oyuncu(tg, durum, ayar, chat_id, mid, arg)
         elif komut == "/pasifler":
-            sayi = re.findall(r"\d+", arg)
-            komut_pasifler(tg, durum, ayar, chat_id, mid, int(sayi[0]) if sayi else ayar["pasif_liste_gun"])
+            if arg.strip() and not arg.strip().isdigit():
+                komut_klan_pasifleri(tg, durum, ayar, chat_id, mid, arg.strip())
+            else:
+                sayi = re.findall(r"\d+", arg)
+                komut_pasifler(tg, durum, ayar, chat_id, mid, int(sayi[0]) if sayi else ayar["pasif_liste_gun"])
 
 
 # --------------------------------------------------------------------------- #
@@ -841,6 +863,33 @@ def komut_oyuncu(tg, durum, ayar, chat_id, mid, sorgu):
               f"⚔️ ODA {nokta(o['a'])} · 🤝 ODS {nokta(o['s'])}\n"
               f"📈 Son gelişme: {son}\n"
               f"{durum_metni}", mid)
+
+
+def komut_klan_pasifleri(tg, durum, ayar, chat_id, mid, sorgu):
+    oyuncular = durum.get("oyuncular")
+    if not oyuncular:
+        tg.gonder(chat_id, "Oyuncu listesi henüz yüklenmedi, biraz sonra tekrar dene.", mid)
+        return
+    kidler = klan_bul(durum, sorgu)
+    if not kidler:
+        tg.gonder(chat_id, f"“{html.escape(sorgu)}” adında klan bulamadım. Klanın oyundaki etiketini yaz "
+                           "(örnek: <b>/pasifler ANATOL</b>).", mid)
+        return
+    simdi = int(time.time())
+    for kid in kidler[:3]:
+        uyeler = sorted(((pid, o) for pid, o in oyuncular.items() if str(o.get("kl")) == kid and o["k"] > 0),
+                        key=lambda t: (t[1]["d"], -t[1]["p"]))
+        tag = durum["klanlar"].get(kid, sorgu)
+        url = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_ally&id={kid}"
+        if not uyeler:
+            tg.gonder(chat_id, f'<a href="{url}">[{html.escape(tag)}]</a> klanında köyü olan üye yok.', mid)
+            continue
+        satirlar = [f"{i}. {aktiflik_ikonu(durum, o, simdi)} {oyuncu_linki(ayar, pid, o)} · "
+                    f"<b>{kisa_sure(durum, o, simdi)}</b> · {o['k']} köy · {nokta(o['p'])} puan"
+                    for i, (pid, o) in enumerate(uyeler[:10], 1)]
+        tg.gonder(chat_id, f'😴 <a href="{url}"><b>[{html.escape(tag)}]</b></a> klanının en pasif '
+                           f"{len(satirlar)} oyuncusu ({len(uyeler)} üyeden)\n\n" + "\n".join(satirlar) +
+                           "\n\n<i>+ = takip başladığından beri hiç değişmedi</i>", mid)
 
 
 def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
