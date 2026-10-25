@@ -530,6 +530,7 @@ YARDIM = (
     "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n"
     "<b>/pasifler ANATOL</b> — o klanın en pasif 10 oyuncusu\n\n"
     "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
+    "⚡ Kayıtlı alanları 5 dakikada bir anlık haritadan kontrol ederim; haritanın geri kalanı saatlik listeden.\n"
     "⏱️ Komutlara en geç ~5 dakika içinde yanıt veririm. "
     "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 5 dk sonra bildiririm."
 )
@@ -1071,6 +1072,8 @@ def komut_durum(tg, durum, ayar, chat_id, mid):
     satirlar += [
         f"🏚️ Haritadaki barbar köyü: <b>{durum.get('barbar_sayisi', len(durum.get('bilinen', [])))}</b>",
         f"🆕 En son yeni barbar: {once(durum.get('son_yeni_barbar'), simdi)}",
+        f"⚡ Alanların anlık kontrolü: {once(durum.get('son_canli'), simdi)}"
+        + (f" ({durum.get('canli_bolum', 0)} harita bölümü)" if durum.get("son_canli") else ""),
         f"👥 Takip edilen oyuncu: <b>{len(durum.get('oyuncular', {}))}</b> "
         f"(takip başlangıcı: {once(durum.get('takip_baslangic'), simdi)})",
         f"📍 Alan kaydeden kişi: <b>{sum(1 for k in durum.get('kisiler', {}).values() if k['alanlar'])}</b>",
@@ -1207,15 +1210,10 @@ def barbarlari_tara(tg, durum, ayar):
 
     satirlar = []
     for k in yeniler:
-        etiketler = [etiket(uid, kisi) for uid, kisi in durum.get("kisiler", {}).items()
-                     if any(alanda_mi(k, a) for a in kisi["alanlar"])]
-        if not etiketler and not ayar["tum_harita"]:
+        etiketli, satir = barbar_satiri(k, durum, ayar)
+        if not etiketli and not ayar["tum_harita"]:
             continue
-        link = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_village&id={k['id']}"
-        satir = f'📍 <a href="{link}"><b>{k["x"]}|{k["y"]}</b></a> · {k["puan"]} puan'
-        if etiketler:
-            satir += " — " + ", ".join(etiketler)
-        satirlar.append((not etiketler, satir))   # etiketliler üstte
+        satirlar.append((not etiketli, satir))   # etiketliler üstte
 
     print(f"::notice::{len(barbarlar)} barbar köyü, {len(yeniler)} yeni, {len(satirlar)} bildirilecek ({surum}).")
     if not satirlar:
@@ -1224,6 +1222,98 @@ def barbarlari_tara(tg, durum, ayar):
     satirlar.sort(key=lambda t: t[0])
     parcali_gonder(tg, hedef, f"🏚️ <b>{len(satirlar)} YENİ BARBAR KÖYÜ</b>\n\n", [s for _, s in satirlar])
     return True
+
+
+def barbar_satiri(k, durum, ayar):
+    etiketler = [etiket(uid, kisi) for uid, kisi in durum.get("kisiler", {}).items()
+                 if any(alanda_mi(k, a) for a in kisi.get("alanlar", []))]
+    link = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_village&id={k['id']}"
+    satir = f'📍 <a href="{link}"><b>{k["x"]}|{k["y"]}</b></a> · {nokta(k["puan"])} puan'
+    if etiketler:
+        satir += " — " + ", ".join(etiketler)
+    return bool(etiketler), satir
+
+
+# --------------------------------------------------------------------------- #
+# Anlık alan kontrolü (misafir haritası)
+# --------------------------------------------------------------------------- #
+CANLI_MAX_BOLUM = 48        # bir turda en fazla bu kadar 20×20 bölüm
+CANLI_ISTEK_BASINA = 12     # tek istekte istenen bölüm sayısı
+
+
+def harita_bolumleri(alanlar):
+    bolumler = set()
+    for a in alanlar:
+        x1, y1, x2, y2 = alan_kutusu(a)
+        for bx in range(max(0, x1) // 20 * 20, x2 + 1, 20):
+            for by in range(max(0, y1) // 20 * 20, y2 + 1, 20):
+                bolumler.add((bx, by))
+    return sorted(bolumler)
+
+
+def harita_koylerini_al(dunya, bolumler):
+    """Misafir haritasının kullandığı map.php'den köyleri okur (giriş gerektirmez)."""
+    koyler = []
+    for i in range(0, len(bolumler), CANLI_ISTEK_BASINA):
+        parca = bolumler[i:i + CANLI_ISTEK_BASINA]
+        url = (f"{dunya.rstrip('/')}/map.php?v=2&e={int(time.time() * 1000)}&"
+               + "&".join(f"{x}_{y}=1" for x, y in parca))
+        istek = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(istek, timeout=30) as r:
+            veri = json.loads(r.read().decode("utf-8"))
+        for b in veri:
+            d = b.get("data") or {}
+            bx, by = int(d.get("x", b.get("x", 0))), int(d.get("y", b.get("y", 0)))
+            vs = d.get("villages") or {}
+            for dx, sutun in (vs.items() if isinstance(vs, dict) else enumerate(vs)):
+                ic = sutun.items() if isinstance(sutun, dict) else enumerate(sutun) if isinstance(sutun, list) else []
+                for dy, v in ic:
+                    if not isinstance(v, list) or len(v) < 5:
+                        continue
+                    try:
+                        koyler.append({"id": int(v[0]), "x": bx + int(dx), "y": by + int(dy),
+                                       "oyuncu": int(v[4] or 0),
+                                       "puan": int(str(v[3]).replace(".", "").replace(",", "") or 0)})
+                    except (TypeError, ValueError):
+                        continue
+        if i + CANLI_ISTEK_BASINA < len(bolumler):
+            time.sleep(1)   # sunucuyu yormamak için istekler arasında kısa ara
+    return koyler
+
+
+def canli_tara(tg, durum, ayar):
+    """Kayıtlı alanları anlık kontrol eder; saatlik listeyi beklemeden yeni barbarı bildirir."""
+    if not ayar.get("canli_kontrol", True) or "gorulen" not in durum:
+        return
+    alanlar = [a for k in durum.get("kisiler", {}).values() for a in k.get("alanlar", [])]
+    if not alanlar:
+        return
+    bolumler = harita_bolumleri(alanlar)[:CANLI_MAX_BOLUM]
+    try:
+        koyler = harita_koylerini_al(ayar["dunya"], bolumler)
+    except Exception as e:
+        durum["canli_hata"] = durum.get("canli_hata", 0) + 1
+        print(f"::warning::Anlık harita okunamadı ({durum['canli_hata']}. kez): {e}")
+        return
+    durum["canli_hata"] = 0
+    durum["son_canli"] = int(time.time())
+    durum["canli_bolum"] = len(bolumler)
+
+    simdi = int(time.time())
+    gorulen = durum["gorulen"]
+    barbarlar = [k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]
+                 and any(alanda_mi(k, a) for a in alanlar)]
+    yeniler = [k for k in barbarlar if simdi - gorulen.get(str(k["id"]), 0) > HATIRLAMA_SN]
+    for k in barbarlar:
+        gorulen[str(k["id"])] = simdi
+    print(f"::notice::Anlık kontrol: {len(bolumler)} bölüm, {len(koyler)} köy, alanlarda {len(barbarlar)} barbar, "
+          f"{len(yeniler)} yeni.")
+    if not yeniler:
+        return
+    durum["son_yeni_barbar"] = simdi
+    satirlar = [barbar_satiri(k, durum, ayar)[1] for k in sorted(yeniler, key=lambda k: -k["puan"])]
+    hedef = durum.get("grup_id") or tg.sahip_id
+    parcali_gonder(tg, hedef, f"⚡ <b>{len(satirlar)} YENİ BARBAR KÖYÜ</b> (anlık)\n\n", satirlar)
 
 
 def alanlari_duzelt(tg, durum):
@@ -1268,6 +1358,7 @@ def tek_tur():
         ok = tg.gonder(durum["grup_id"], "🔧 Test: bot bu gruba yazabiliyor. Komutlar için /yardim")
         print(f"::notice::Grup test mesajı: {'gönderildi' if ok else 'GÖNDERİLEMEDİ'}")
         durum["grup_test_1"] = True
+    canli_tara(tg, durum, ayar)
     basarili = barbarlari_tara(tg, durum, ayar)
     durum["son_calisma"] = TUR["baslangic"]
     durum_yaz(durum)
