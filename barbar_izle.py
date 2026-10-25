@@ -425,6 +425,18 @@ class Telegram:
                     aciklama += " — " + json.loads(e.read().decode()).get("description", "")
                 except Exception:
                     pass
+            if "parse entities" in aciklama:
+                # Biçimlendirme reddedildi: etiketleri atıp düz metin olarak yeniden dene
+                duz = html.unescape(re.sub(r"<[^>]+>", "", metin))
+                veri.pop("parse_mode", None)
+                veri["text"] = duz
+                try:
+                    self._istek("sendMessage", veri)
+                    TUR["gonderilen"] = TUR.get("gonderilen", 0) + 1
+                    print(f"::warning::Biçimlendirme hatası, düz metin gönderildi: {aciklama}")
+                    return True
+                except Exception:
+                    pass
             hedef_turu = "grup" if str(chat_id).startswith("-") else "özel sohbet"
             print(f"::warning::Telegram gönderilemedi ({hedef_turu}): {aciklama}")
             TUR["hata"] = True
