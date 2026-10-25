@@ -485,7 +485,8 @@ YARDIM = (
     "<b>/alan 421-429 513-521</b> — aynı alan, X ve Y aralığı olarak\n"
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
     "<b>/alanlarim</b> — alanlarının haritası ve alandaki oyuncuların aktifliği\n"
-    "<b>/alansil</b> — tüm alanlarını sil\n\n"
+    "<b>/alansil 2</b> — 2. alanını sil (<b>/alansil hepsi</b> ile tümünü)\n"
+    "Birden fazla alan için /alan komutunu tekrar yazman yeterli (en fazla 10).\n\n"
     "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
     "<b>/durum</b> — bot durumu ve en uzun süredir hareketsiz 10 oyuncu\n"
     "<b>/nick OyunAdın</b> — senin istediğin haritalarda köylerin sarı görünsün\n"
@@ -581,12 +582,36 @@ def komutlari_isle(tg, durum, ayar):
             if not kisi or not kisi["alanlar"]:
                 tg.gonder(chat_id, "Kayıtlı alanın yok. Eklemek için: <b>/alan 421-429 513-521</b>", mid)
             else:
-                satirlar = "\n".join(f"• {alan_metni(a)}" for a in kisi["alanlar"])
+                satirlar = "\n".join(f"<b>{i}.</b> {alan_metni(a)}" for i, a in enumerate(kisi["alanlar"], 1))
+                satirlar += "\n\nTek alanı silmek için: <b>/alansil 2</b> · hepsini silmek için: <b>/alansil hepsi</b>"
                 haritali_gonder(tg, ayar, durum, chat_id, f"📍 {etiket(uid, kisi)} alanların:\n{satirlar}",
                                 kisi["alanlar"], mid, uid)
-        elif komut == "/alansil":
-            kisiler.pop(uid, None)
-            tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)
+        elif komut in ("/alansil", "/alanısil"):
+            kisi = kisiler.get(uid)
+            alanlar_ = kisi.get("alanlar", []) if kisi else []
+            sayi = re.findall(r"\d+", arg)
+            if not alanlar_:
+                tg.gonder(chat_id, "Kayıtlı alanın yok.", mid)
+            elif sayi:
+                no = int(sayi[0])
+                if 1 <= no <= len(alanlar_):
+                    silinen = alanlar_.pop(no - 1)
+                    kalan = "\n".join(f"<b>{i}.</b> {alan_metni(a)}" for i, a in enumerate(alanlar_, 1))
+                    tg.gonder(chat_id, f"🗑️ {no}. alan silindi: {alan_metni(silinen)}"
+                                       + (f"\n\nKalan alanların:\n{kalan}" if kalan else "\nBaşka alanın kalmadı."), mid)
+                else:
+                    tg.gonder(chat_id, f"{len(alanlar_)} alanın var; 1 ile {len(alanlar_)} arasında bir numara yaz. "
+                                       "Numaraları görmek için /alanim", mid)
+            elif tr_kucuk(arg.strip()) in ("hepsi", "tümü", "tumu", "hepsini"):
+                kisi["alanlar"] = []
+                tg.gonder(chat_id, "🗑️ Tüm alanların silindi.", mid)
+            elif len(alanlar_) == 1:
+                kisi["alanlar"] = []
+                tg.gonder(chat_id, "🗑️ Alanın silindi.", mid)
+            else:
+                liste = "\n".join(f"<b>{i}.</b> {alan_metni(a)}" for i, a in enumerate(alanlar_, 1))
+                tg.gonder(chat_id, f"{len(alanlar_)} alanın var, hangisini silelim?\n{liste}\n\n"
+                                   "Örnek: <b>/alansil 2</b> · hepsi için <b>/alansil hepsi</b>", mid)
         elif komut == "/durum":
             komut_durum(tg, durum, ayar, chat_id, mid)
         elif komut == "/barbarlar":
