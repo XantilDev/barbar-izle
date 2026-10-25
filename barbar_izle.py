@@ -379,12 +379,16 @@ def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid, uid=None):
         tg.foto_gonder(chat_id, png, metin, mid)
     else:
         tg.gonder(chat_id, metin, mid)
-    satirlar = alan_oyuncu_listesi(ayar, durum, alanlar, koyler) if durum.get("oyuncular") else []
+    if not durum.get("oyuncular"):
+        return
+    satirlar, toplam = alan_oyuncu_listesi(ayar, durum, alanlar, koyler)
     if satirlar:
         parcali_gonder(tg, chat_id,
-                       f"👥 <b>Alandaki {len(satirlar)} oyuncu</b> — son gelişmeden bu yana geçen süre\n"
-                       "(⚫ 7+ gün · 🔴 5-7 · 🟡 2-5 · 🟢 aktif · <b>+</b> = takip başladığından beri hiç değişmedi)\n\n",
+                       f"👥 <b>Alandaki {toplam} oyuncudan {len(satirlar)} kişi 1 günden uzun süredir gelişmedi</b>\n"
+                       "(⚫ 7+ gün · 🔴 5-7 · 🟡 2-5 · 🟢 1-2 · <b>+</b> = takip başladığından beri hiç değişmedi)\n\n",
                        satirlar, mid)
+    elif toplam:
+        tg.gonder(chat_id, f"👥 Alandaki {toplam} oyuncunun hepsi son 24 saat içinde gelişmiş, pasif yok.", mid)
 
 
 def alan_buyuklugu(a):
@@ -954,11 +958,14 @@ def alan_oyuncu_listesi(ayar, durum, alanlar, koyler):
             sayilar[str(k["oyuncu"])] = sayilar.get(str(k["oyuncu"]), 0) + 1
     simdi = int(time.time())
     kayitli = [(pid, oyuncular[pid]) for pid in sayilar if pid in oyuncular]
+    toplam = len(kayitli)
+    # Son 24 saatte gelişen oyuncular listelenmez
+    kayitli = [(pid, o) for pid, o in kayitli if simdi - o["d"] >= GUN]
     kayitli.sort(key=lambda t: t[1]["d"])
     satirlar = [f"{aktiflik_ikonu(durum, o, simdi)} {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · "
                 f"<b>{kisa_sure(durum, o, simdi)}</b> · {sayilar[pid]} köy alanda"
                 for pid, o in kayitli]
-    return satirlar
+    return satirlar, toplam
 
 
 def oyuncu_ara(durum, sorgu):
