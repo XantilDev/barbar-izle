@@ -1074,7 +1074,7 @@ def komut_durum(tg, durum, ayar, chat_id, mid):
         f"🆕 En son yeni barbar: {once(durum.get('son_yeni_barbar'), simdi)}",
         f"⚡ Alanların anlık kontrolü: {once(durum.get('son_canli'), simdi)}"
         + (f" ({durum.get('canli_bolum', 0)} harita bölümü)" if durum.get("son_canli") else "")
-        + (" — ⚠️ şu an erişilemiyor, saatte bir deneniyor" if durum.get("canli_askida") else ""),
+        + (" — ⚠️ şu an erişilemiyor, 30 dakikada bir deneniyor" if durum.get("canli_askida") else ""),
         f"👥 Takip edilen oyuncu: <b>{len(durum.get('oyuncular', {}))}</b> "
         f"(takip başlangıcı: {once(durum.get('takip_baslangic'), simdi)})",
         f"📍 Alan kaydeden kişi: <b>{sum(1 for k in durum.get('kisiler', {}).values() if k['alanlar'])}</b>",
@@ -1291,8 +1291,8 @@ def canli_tara(tg, durum, ayar):
         return
     simdi = int(time.time())
     hedef = durum.get("grup_id") or tg.sahip_id
-    # Erişim sorunluysa sunucuyu zorlamamak için saatte bir dene
-    if durum.get("canli_askida") and simdi - durum.get("canli_son_deneme", 0) < 3600:
+    # Erişim sorunluysa sunucuyu zorlamamak için 30 dakikada bir dene
+    if durum.get("canli_askida") and simdi - durum.get("canli_son_deneme", 0) < 30 * 60:
         return
     durum["canli_son_deneme"] = simdi
     bolumler = harita_bolumleri(alanlar)[:CANLI_MAX_BOLUM]
@@ -1307,7 +1307,7 @@ def canli_tara(tg, durum, ayar):
             durum["canli_askida"] = True
             tg.gonder(hedef, "⚠️ <b>Anlık alan kontrolü şu an çalışmıyor</b> (Klanlar haritaya erişimi engellemiş "
                              "ya da doğrulama istiyor olabilir). Bildirimler saatlik listeden gelmeye devam ediyor; "
-                             "anlık kontrolü saatte bir tekrar deneyeceğim.")
+                             "anlık kontrolü 30 dakikada bir tekrar deneyeceğim.")
         return
     if durum.get("canli_askida"):
         tg.gonder(hedef, "✅ Anlık alan kontrolü yeniden çalışıyor.")
