@@ -135,15 +135,54 @@ def koyleri_ayristir(metin):
     return koyler
 
 
+def cokgende_mi(x, y, noktalar):
+    """(x, y) çokgenin içinde ya da kenarı üzerinde mi (köşeler köy koordinatları)."""
+    n = len(noktalar)
+    for i in range(n):
+        (ax, ay), (bx, by) = noktalar[i], noktalar[(i + 1) % n]
+        if (bx - ax) * (y - ay) == (by - ay) * (x - ax) and \
+                min(ax, bx) <= x <= max(ax, bx) and min(ay, by) <= y <= max(ay, by):
+            return True
+    ic = False
+    for i in range(n):
+        (ax, ay), (bx, by) = noktalar[i], noktalar[(i + 1) % n]
+        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+            ic = not ic
+    return ic
+
+
 def alanda_mi(k, a):
     if a["tip"] == "daire":
         return math.hypot(k["x"] - a["x"], k["y"] - a["y"]) <= a["r"]
+    if a["tip"] == "cokgen":
+        x1, y1, x2, y2 = alan_kutusu(a)
+        return x1 <= k["x"] <= x2 and y1 <= k["y"] <= y2 and cokgende_mi(k["x"], k["y"], a["noktalar"])
     return a["x1"] <= k["x"] <= a["x2"] and a["y1"] <= k["y"] <= a["y2"]
+
+
+def cokgen_hucre_sayisi(a):
+    x1, y1, x2, y2 = alan_kutusu(a)
+    return sum(1 for x in range(x1, x2 + 1) for y in range(y1, y2 + 1) if cokgende_mi(x, y, a["noktalar"]))
+
+
+def cokgen(noktalar):
+    """Köşeleri merkez etrafında açıya göre sıralar: hangi sırayla yazılırsa yazılsın düzgün şekil olur.
+    Köşeleri eksenlere paralel bir dikdörtgen oluşturuyorsa dikdörtgen olarak kaydeder."""
+    noktalar = list(dict.fromkeys((int(x), int(y)) for x, y in noktalar))
+    xs, ys = [p[0] for p in noktalar], [p[1] for p in noktalar]
+    if len(noktalar) == 4 and len(set(xs)) == 2 and len(set(ys)) == 2:
+        return dikdortgen(min(xs), max(xs), min(ys), max(ys))
+    cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+    noktalar.sort(key=lambda p: math.atan2(p[1] - cy, p[0] - cx))
+    return {"tip": "cokgen", "noktalar": [list(p) for p in noktalar]}
 
 
 def alan_metni(a):
     if a["tip"] == "daire":
         return f"{a['x']}|{a['y']} çevresi, {a['r']} alan yarıçap"
+    if a["tip"] == "cokgen":
+        koseler = " → ".join(f"{x}|{y}" for x, y in a["noktalar"])
+        return f"{len(a['noktalar'])} köşeli alan: {koseler} ({cokgen_hucre_sayisi(a)} alan)"
     g, y = a["x2"] - a["x1"] + 1, a["y2"] - a["y1"] + 1
     return (f"X {a['x1']}–{a['x2']}, Y {a['y1']}–{a['y2']} "
             f"(köşeler {a['x1']}|{a['y1']} ve {a['x2']}|{a['y2']}, {g}×{y} = {g * y} alan)")
@@ -158,6 +197,10 @@ def alan_kutusu(a):
     """Alanı çevreleyen kutu: (x1, y1, x2, y2)."""
     if a["tip"] == "daire":
         return a["x"] - a["r"], a["y"] - a["r"], a["x"] + a["r"], a["y"] + a["r"]
+    if a["tip"] == "cokgen":
+        xs = [p[0] for p in a["noktalar"]]
+        ys = [p[1] for p in a["noktalar"]]
+        return min(xs), min(ys), max(xs), max(ys)
     return a["x1"], a["y1"], a["x2"], a["y2"]
 
 
@@ -314,6 +357,18 @@ def harita_ciz(koyler, alanlar, boya=None):
             d.line([sol, Y, sol + gen * hucre, Y], fill=(92, 128, 72), width=1)
             d.text((4, Y + 1), str(y), fill=(200, 200, 200), font=kucuk)
 
+    # Çokgen alanların içini köylerin altında hafifçe renklendir
+    zemin = (76, 110, 58)
+    ic_renk = (104, 146, 80)   # zeminden açık yeşil; köy renkleriyle karışmaz
+    for a in alanlar:
+        if a["tip"] == "cokgen":
+            ax1, ay1, ax2, ay2 = alan_kutusu(a)
+            for x in range(max(ax1, x1), min(ax2, x2) + 1):
+                for y in range(max(ay1, y1), min(ay2, y2) + 1):
+                    if cokgende_mi(x, y, a["noktalar"]):
+                        X, Y = px(x, y)
+                        d.rectangle([X, Y, X + hucre - 1, Y + hucre - 1], fill=ic_renk)
+
     m = max(1, hucre // 6)
     for k, renk in gorunen:
         X, Y = px(k["x"], k["y"])
@@ -325,6 +380,12 @@ def harita_ciz(koyler, alanlar, boya=None):
             cx, cy = px(a["x"], a["y"])
             cx, cy, r = cx + hucre / 2, cy + hucre / 2, (a["r"] + 0.5) * hucre
             d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=ALAN_RENK, width=3)
+        elif a["tip"] == "cokgen":
+            ax1, ay1, ax2, ay2 = alan_kutusu(a)
+            merkezler = [(px(x, y)[0] + hucre / 2, px(x, y)[1] + hucre / 2) for x, y in a["noktalar"]]
+            d.line(merkezler + [merkezler[0]], fill=ALAN_RENK, width=3, joint="curve")
+            for X, Y in merkezler:
+                d.ellipse([X - 4, Y - 4, X + 4, Y + 4], fill=ALAN_RENK)
         else:
             X1, Y1 = px(a["x1"], a["y1"])
             X2, Y2 = px(a["x2"] + 1, a["y2"] + 1)
@@ -404,6 +465,12 @@ def alan_coz(arg):
     sayilar = [int(s) for s in re.findall(r"\d+", arg)]
     if any(n > 999 for n in sayilar):
         return None
+    if len(sayilar) in (6, 8, 10, 12, 14, 16):   # 3-8 köşe: 421|513 429|510 435|520 …
+        noktalar = list(zip(sayilar[0::2], sayilar[1::2]))
+        alan = cokgen(noktalar)
+        if alan["tip"] == "cokgen" and len(alan["noktalar"]) < 3:
+            return None
+        return alan
     if len(sayilar) == 4:
         a, b, c, d = sayilar
         kose = dikdortgen(a, c, b, d)
@@ -529,6 +596,8 @@ YARDIM = (
     "<code>/alan 421|513 429|521</code>\n"
     "Ya da bir köyün çevresi (merkez + kaç alan):\n"
     "<code>/alan 425|517 10</code>\n"
+    "Ya da 3-8 köşeli serbest şekil (köşeleri sırayla yaz):\n"
+    "<code>/alan 420|510 432|506 436|518 424|522</code>\n"
     "→ Bot alanın haritasını çizip gönderir; doğru yeri seçtiğini oradan kontrol et.\n"
     "\n"
     "<b>3) Kontrol et</b>\n"
@@ -647,7 +716,8 @@ def komutlari_isle(tg, durum, ayar):
                 tg.gonder(chat_id, "Anlayamadım. Örnekler:\n"
                                    "<b>/alan 421-429 513-521</b>  (X aralığı, Y aralığı)\n"
                                    "<b>/alan 421|513 429|521</b>  (sol üst ve sağ alt köşe)\n"
-                                   "<b>/alan 425|517 10</b>  (köy çevresi, 10 alan)", mid)
+                                   "<b>/alan 425|517 10</b>  (köy çevresi, 10 alan)\n"
+                                   "<b>/alan 420|510 432|506 436|518 424|522</b>  (3-8 köşeli şekil)", mid)
                 continue
             kisi = kisiler.setdefault(uid, {"alanlar": []})
             kisi["ad"] = kimden.get("first_name") or kimden.get("username") or "üye"
@@ -657,7 +727,9 @@ def komutlari_isle(tg, durum, ayar):
                 continue
             kisi["alanlar"].append(alan)
             uyari = ""
-            if alan["tip"] == "dikdortgen" and alan_buyuklugu(alan) > 50 * 50:
+            buyukluk = (alan_buyuklugu(alan) if alan["tip"] == "dikdortgen"
+                        else cokgen_hucre_sayisi(alan) if alan["tip"] == "cokgen" else 0)
+            if buyukluk > 50 * 50:
                 uyari = ("\n⚠️ Bu çok büyük bir alan. Yanlışsa <b>/alansil</b> yazıp tekrar ekle. "
                          "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
             haritali_gonder(tg, ayar, durum, chat_id,
@@ -1384,7 +1456,7 @@ def canli_tara(tg, durum, ayar):
 KOMUT_MENUSU = [
     ("yardim", "Rehber: bot nasıl kullanılır"),
     ("nick", "Oyundaki adını bağla: /nick OyunAdın"),
-    ("alan", "Alan ekle: /alan 421|513 429|521"),
+    ("alan", "Alan ekle: 2 köşe, 3-8 köşe ya da merkez+yarıçap"),
     ("alanim", "Alanların, haritası ve pasif oyuncular"),
     ("alansil", "Alan sil: /alansil 2 ya da /alansil hepsi"),
     ("barbarlar", "Alanlarındaki mevcut barbar köyleri"),
@@ -1394,7 +1466,7 @@ KOMUT_MENUSU = [
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 1
+KOMUT_MENUSU_SURUM = 2
 
 
 def komut_menusunu_ayarla(tg, durum):
