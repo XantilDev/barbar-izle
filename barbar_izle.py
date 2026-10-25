@@ -513,26 +513,69 @@ def etiket(uid, kisi):
 # Grup komutları
 # --------------------------------------------------------------------------- #
 YARDIM = (
-    "🏚️ <b>Barbar köyü botu</b>\n\n"
-    "Haritada yeni barbar köyü çıktığında bu gruba yazarım. Köy sizin alanınızdaysa sizi etiketlerim.\n\n"
-    "<b>/alan 421|513 429|521</b> — alan ekle (sol üst ve sağ alt köşe)\n"
-    "<b>/alan 421-429 513-521</b> — aynı alan, X ve Y aralığı olarak\n"
-    "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
-    "<b>/alanlarim</b> — alanlarının haritası ve alandaki oyuncuların aktifliği\n"
-    "<b>/alansil 2</b> — 2. alanını sil (<b>/alansil hepsi</b> ile tümünü)\n"
-    "Birden fazla alan için /alan komutunu tekrar yazman yeterli (en fazla 10).\n\n"
-    "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
-    "<b>/durum</b> — bot durumu ve en uzun süredir hareketsiz 10 oyuncu\n"
-    "<b>/nick OyunAdın</b> — senin istediğin haritalarda köylerin sarı görünsün\n"
-    "<b>/klanrenk UDW mavi</b> — klanın köylerini o renge boya\n"
-    "<b>/harita 421|513 429|521</b> — herhangi bir bölgenin haritası\n"
-    "<b>/oyuncu İsim</b> — oyuncu bilgisi ve aktiflik durumu\n"
-    "<b>/pasifler</b> — 5 gündür hiç gelişmeyen oyuncular (<b>/pasifler 3</b> gibi gün de yazılabilir)\n"
-    "<b>/pasifler ANATOL</b> — o klanın en pasif 10 oyuncusu\n\n"
-    "⚫ 7 gündür hareketsiz oyuncuları da bildiririm; köyleri alanınızdaysa sizi etiketlerim.\n\n"
-    "⚡ Kayıtlı alanları 5 dakikada bir anlık haritadan kontrol ederim; haritanın geri kalanı saatlik listeden.\n"
-    "⏱️ Komutlara en geç ~5 dakika içinde yanıt veririm. "
-    "Klanlar köy listesini saatte bir yayınlar; yayınlandıktan en geç 5 dk sonra bildiririm."
+    "🏚️ <b>KLANLAR BARBAR BOTU — REHBER</b>\n"
+    "Haritada yeni barbar köyü çıkınca bu gruba yazarım. Köy senin alanındaysa seni etiketlerim, "
+    "telefonuna bildirim düşer.\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "🚀 <b>İLK 3 ADIM</b>\n"
+    "\n"
+    "<b>1) Oyundaki adını bağla</b>\n"
+    "<code>/nick OyunAdın</code>\n"
+    "→ Haritalarda kendi köylerin 🟨 sarı görünür.\n"
+    "\n"
+    "<b>2) Takip edilecek alanını ekle</b>\n"
+    "Oyun haritasında bölgenin <b>sol üst</b> ve <b>sağ alt</b> köşesindeki koordinatları yaz:\n"
+    "<code>/alan 421|513 429|521</code>\n"
+    "Ya da bir köyün çevresi (merkez + kaç alan):\n"
+    "<code>/alan 425|517 10</code>\n"
+    "→ Bot alanın haritasını çizip gönderir; doğru yeri seçtiğini oradan kontrol et.\n"
+    "\n"
+    "<b>3) Kontrol et</b>\n"
+    "<code>/alanim</code>\n"
+    "→ Alanların haritası + alandaki pasif oyuncular.\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "📍 <b>ALANLAR</b>\n"
+    "<code>/alan …</code> — yeni alan ekle (tekrar yazarak 10 alana kadar)\n"
+    "<code>/alanim</code> — alanların, haritası ve pasif oyuncular\n"
+    "<code>/alansil 2</code> — 2. alanı sil · <code>/alansil hepsi</code> — tümünü sil\n"
+    "<code>/barbarlar</code> — alanlarındaki mevcut barbar köyleri\n"
+    "<code>/harita 421|513 429|521</code> — herhangi bir bölgenin haritası\n"
+    "\n"
+    "👤 <b>OYUNCULAR</b>\n"
+    "<code>/oyuncu İsim</code> — oyuncu bilgisi ve son ne zaman geliştiği\n"
+    "<code>/pasifler</code> — 5 gündür hiç gelişmeyenler (<code>/pasifler 3</code> = 3 gün)\n"
+    "<code>/pasifler ANATOL</code> — bir klanın en pasif 10 oyuncusu\n"
+    "\n"
+    "🎨 <b>HARİTA RENKLERİ</b>\n"
+    "🟨 senin köylerin · ⬜ barbar · 🟫 diğer oyuncular · 🟥 çerçeve = alan\n"
+    "<code>/klanrenk UDW mavi</code> — bir klanı renklendir · <code>/klanrenk</code> — mevcut renkler\n"
+    "\n"
+    "🤖 <b>BOT</b>\n"
+    "<code>/durum</code> — bot çalışıyor mu + en uzun süredir hareketsiz 10 oyuncu\n"
+    "<code>/yardim</code> — bu rehber\n"
+    "\n"
+    "━━━━━━━━━━━━━━━\n"
+    "ℹ️ <b>BİLMEN GEREKENLER</b>\n"
+    "• Bot 5 dakikada bir çalışır; komutlara <b>en geç 5 dk</b> içinde cevap verir. Cevap gelmezse tekrar "
+    "yazma, bekle.\n"
+    "• ⚡ <b>anlık</b> bildirimler kayıtlı alanlardan gelir (birkaç dakika içinde). 🏚️ bildirimler haritanın "
+    "geri kalanından, saatte bir gelir.\n"
+    "• Aktiflik = puan, köy, saldırı veya destek puanı artışı. Süredeki <b>+</b> işareti: bot takibe "
+    "başladığından beri hiç değişmemiş demek.\n"
+    "• ⚫ 7 gündür hareketsiz oyuncular otomatik bildirilir; köyleri alanındaysa etiketlenirsin.\n"
+    "• Bot oyuna giriş yapmaz, hesabınla ilgisi yoktur; sadece Klanlar'ın herkese açık verisini okur."
+)
+
+HOSGELDIN = (
+    "👋 Hoş geldin {ad}!\n\n"
+    "Bu grupta haritada yeni barbar köyü çıkınca bildirim atıyorum; köy senin alanındaysa seni etiketliyorum.\n\n"
+    "<b>Başlamak için 2 komut yeter:</b>\n"
+    "1) <code>/nick OyunAdın</code> — oyundaki adın\n"
+    "2) <code>/alan 421|513 429|521</code> — takip edeceğin bölgenin sol üst ve sağ alt köşesi\n\n"
+    "Sonra <code>/alanim</code> ile haritanı gör. Tüm komutlar ve açıklamalar için 👉 /yardim\n"
+    "<i>Komutlara en geç 5 dakika içinde cevap veririm.</i>"
 )
 
 
@@ -561,6 +604,12 @@ def komutlari_isle(tg, durum, ayar):
     for u in guncellemeler:
         durum["offset"] = u["update_id"] + 1
         msg = u.get("message") or {}
+        yeni_uyeler = [m for m in msg.get("new_chat_members", []) if not m.get("is_bot")]
+        if yeni_uyeler and str(msg.get("chat", {}).get("id")) == durum.get("grup_id"):
+            adlar = ", ".join(etiket(str(m["id"]), {"ad": m.get("first_name") or m.get("username")})
+                              for m in yeni_uyeler)
+            tg.gonder(durum["grup_id"], HOSGELDIN.format(ad=adlar))
+            continue
         metin = (msg.get("text") or "").strip()
         if not metin.startswith("/"):
             continue
@@ -590,7 +639,7 @@ def komutlari_isle(tg, durum, ayar):
         if chat_id != hedef:
             continue
 
-        if komut in ("/yardim", "/start", "/help"):
+        if komut in ("/yardim", "/yardım", "/start", "/help", "/komutlar"):
             tg.gonder(chat_id, YARDIM, mid)
         elif komut == "/alan":
             alan = alan_coz(arg)
@@ -1332,6 +1381,35 @@ def canli_tara(tg, durum, ayar):
     parcali_gonder(tg, hedef, f"⚡ <b>{len(satirlar)} YENİ BARBAR KÖYÜ</b> (anlık)\n\n", satirlar)
 
 
+KOMUT_MENUSU = [
+    ("yardim", "Rehber: bot nasıl kullanılır"),
+    ("nick", "Oyundaki adını bağla: /nick OyunAdın"),
+    ("alan", "Alan ekle: /alan 421|513 429|521"),
+    ("alanim", "Alanların, haritası ve pasif oyuncular"),
+    ("alansil", "Alan sil: /alansil 2 ya da /alansil hepsi"),
+    ("barbarlar", "Alanlarındaki mevcut barbar köyleri"),
+    ("harita", "Bölge haritası: /harita 421|513 429|521"),
+    ("oyuncu", "Oyuncu bilgisi: /oyuncu İsim"),
+    ("pasifler", "Pasif oyuncular: /pasifler ya da /pasifler KLAN"),
+    ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
+    ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
+]
+KOMUT_MENUSU_SURUM = 1
+
+
+def komut_menusunu_ayarla(tg, durum):
+    """Telegram'da '/' yazınca çıkan komut listesini bir kez ayarlar."""
+    if durum.get("komut_menusu") == KOMUT_MENUSU_SURUM:
+        return
+    try:
+        tg._istek("setMyCommands", {"commands": json.dumps(
+            [{"command": k, "description": a} for k, a in KOMUT_MENUSU], ensure_ascii=False)})
+        durum["komut_menusu"] = KOMUT_MENUSU_SURUM
+        print("::notice::Telegram komut menüsü ayarlandı.")
+    except Exception as e:
+        print(f"::warning::Komut menüsü ayarlanamadı: {e}")
+
+
 def alanlari_duzelt(tg, durum):
     """Eski sürüm '423-512 429-519' gibi köşe yazımlarını X/Y aralığı sanıp dev alanlar
     kaydediyordu. Bu kayıtları bir kez köşe yorumuyla düzeltir ve gruba bildirir."""
@@ -1368,6 +1446,7 @@ def tek_tur():
         kisi["alanlar"].extend(ayar["sahip_alanlari"])
         durum["sahip_tohumlandi"] = True
     alanlari_duzelt(tg, durum)
+    komut_menusunu_ayarla(tg, durum)
     oyunculari_guncelle(tg, durum, ayar)   # komutlar güncel veriyle yanıtlansın
     komutlari_isle(tg, durum, ayar)
     if durum.get("grup_id") and not durum.get("grup_test_1"):
