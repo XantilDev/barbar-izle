@@ -361,6 +361,12 @@ def haritali_gonder(tg, ayar, durum, chat_id, metin, alanlar, mid, uid=None):
         tg.foto_gonder(chat_id, png, metin, mid)
     else:
         tg.gonder(chat_id, metin, mid)
+    satirlar = alan_oyuncu_listesi(ayar, durum, alanlar, koyler) if durum.get("oyuncular") else []
+    if satirlar:
+        parcali_gonder(tg, chat_id,
+                       f"👥 <b>Alandaki {len(satirlar)} oyuncu</b> — son gelişmeden bu yana geçen süre\n"
+                       "(⚫ 7+ gün · 🔴 5-7 · 🟡 2-5 · 🟢 aktif · <b>+</b> = takip başladığından beri hiç değişmedi)\n\n",
+                       satirlar, mid)
 
 
 def alan_buyuklugu(a):
@@ -478,10 +484,10 @@ YARDIM = (
     "<b>/alan 421|513 429|521</b> — alan ekle (sol üst ve sağ alt köşe)\n"
     "<b>/alan 421-429 513-521</b> — aynı alan, X ve Y aralığı olarak\n"
     "<b>/alan 500|500 15</b> — köy çevresi ekle (merkez + yarıçap)\n"
-    "<b>/alanlarim</b> — alanlarını haritasıyla gör\n"
+    "<b>/alanlarim</b> — alanlarının haritası ve alandaki oyuncuların aktifliği\n"
     "<b>/alansil</b> — tüm alanlarını sil\n\n"
     "<b>/barbarlar</b> — alanlarındaki mevcut barbar köyleri\n"
-    "<b>/durum</b> — bot çalışıyor mu, en son ne zaman baktı\n"
+    "<b>/durum</b> — bot durumu ve en uzun süredir hareketsiz 10 oyuncu\n"
     "<b>/nick OyunAdın</b> — senin istediğin haritalarda köylerin sarı görünsün\n"
     "<b>/klanrenk UDW mavi</b> — klanın köylerini o renge boya\n"
     "<b>/harita 421|513 429|521</b> — herhangi bir bölgenin haritası\n"
@@ -570,7 +576,7 @@ def komutlari_isle(tg, durum, ayar):
                          "Örnek: <b>/alan 421|513 429|521</b> (sol üst ve sağ alt köşe)")
             haritali_gonder(tg, ayar, durum, chat_id,
                             f"✅ {etiket(uid, kisi)} alanın eklendi: <b>{alan_metni(alan)}</b>{uyari}", [alan], mid, uid)
-        elif komut == "/alanlarim":
+        elif komut in ("/alanlarim", "/alanim", "/alanlarım", "/alanım"):
             kisi = kisiler.get(uid)
             if not kisi or not kisi["alanlar"]:
                 tg.gonder(chat_id, "Kayıtlı alanın yok. Eklemek için: <b>/alan 421-429 513-521</b>", mid)
@@ -838,6 +844,37 @@ def komut_pasifler(tg, durum, ayar, chat_id, mid, gun):
                                 "(puan, köy, ODA, ODS değişmedi — puana göre sıralı)\n\n", satirlar, mid)
 
 
+def kisa_sure(durum, o, simdi):
+    """'3 gün', '5 sa', '<1 sa'; takip başlangıcından beri değişmediyse sonuna '+' (en az)."""
+    sn = simdi - o["d"]
+    g = sn // GUN
+    metin = f"{g} gün" if g else (f"{sn // 3600} sa" if sn >= 3600 else "<1 sa")
+    return metin + ("+" if o["d"] <= durum.get("takip_baslangic", 0) else "")
+
+
+def aktiflik_ikonu(durum, o, simdi):
+    gun = (simdi - o["d"]) / GUN
+    if o["d"] <= durum.get("takip_baslangic", 0) and gun < 2:
+        return "⚪"
+    return "🟢" if gun < 2 else "🟡" if gun < 5 else "🔴" if gun < 7 else "⚫"
+
+
+def alan_oyuncu_listesi(ayar, durum, alanlar, koyler):
+    """Alanlarda köyü olan oyuncuları, en uzun süredir hareketsiz olandan başlayarak listeler."""
+    oyuncular = durum.get("oyuncular", {})
+    sayilar = {}
+    for k in koyler:
+        if k["oyuncu"] and any(alanda_mi(k, a) for a in alanlar):
+            sayilar[str(k["oyuncu"])] = sayilar.get(str(k["oyuncu"]), 0) + 1
+    simdi = int(time.time())
+    kayitli = [(pid, oyuncular[pid]) for pid in sayilar if pid in oyuncular]
+    kayitli.sort(key=lambda t: t[1]["d"])
+    satirlar = [f"{aktiflik_ikonu(durum, o, simdi)} {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · "
+                f"<b>{kisa_sure(durum, o, simdi)}</b> · {sayilar[pid]} köy alanda"
+                for pid, o in kayitli]
+    return satirlar
+
+
 def oyuncu_ara(durum, sorgu):
     oyuncular = durum.get("oyuncular", {})
     q = tr_kucuk(sorgu.strip())
@@ -947,6 +984,15 @@ def komut_durum(tg, durum, ayar, chat_id, mid):
     ]
     if onceki and simdi - onceki > 20 * 60:
         satirlar.append("⚠️ Bir önceki çalışmadan bu yana 20 dakikadan fazla geçmiş — tetikleyici aksıyor olabilir.")
+    oyuncular = durum.get("oyuncular", {})
+    pasif = sorted(((pid, o) for pid, o in oyuncular.items() if o["k"] > 0),
+                   key=lambda t: (t[1]["d"], -t[1]["p"]))[:10]
+    if pasif:
+        satirlar.append("\n😴 <b>En uzun süredir hareketsiz 10 oyuncu</b>")
+        satirlar += [f"{i}. {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · "
+                     f"<b>{kisa_sure(durum, o, simdi)}</b> · {o['k']} köy"
+                     for i, (pid, o) in enumerate(pasif, 1)]
+        satirlar.append("<i>+ = takip başladığından beri hiç değişmedi (en az bu kadar)</i>")
     tg.gonder(chat_id, "\n".join(satirlar), mid)
 
 
