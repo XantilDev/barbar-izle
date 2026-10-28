@@ -620,6 +620,7 @@ YARDIM = (
     "<code>/oyuncu İsim</code> — oyuncu bilgisi ve son ne zaman geliştiği\n"
     "<code>/pasifler</code> — 5 gündür hiç gelişmeyenler (<code>/pasifler 3</code> = 3 gün)\n"
     "<code>/pasifler ANATOL</code> — bir klanın en pasif 10 oyuncusu\n"
+    "<code>/alanpasif</code> — alanındaki 7 gündür hareketsiz oyuncular, köyleriyle\n"
     "\n"
     "🎨 <b>HARİTA RENKLERİ</b>\n"
     "🟨 senin köylerin · ⬜ barbar · 🟫 diğer oyuncular · 🟥 çerçeve = alan\n"
@@ -637,7 +638,8 @@ YARDIM = (
     "geri kalanından, saatte bir gelir.\n"
     "• Aktiflik = puan, köy, saldırı veya destek puanı artışı. Süredeki <b>+</b> işareti: bot takibe "
     "başladığından beri hiç değişmemiş demek.\n"
-    "• ⚫ 7 gündür hareketsiz oyuncular otomatik bildirilir; köyleri alanındaysa etiketlenirsin.\n"
+    "• ⚫ 7 gündür hareketsiz oyuncular otomatik bildirilir; köyleri alanındaysa etiketlenirsin. "
+    "Ardından her üyeye 10'ar dakika arayla kendi alanının listesi gelir (en fazla günde bir).\n"
     "• Bot oyuna giriş yapmaz, hesabınla ilgisi yoktur; sadece Klanlar'ın herkese açık verisini okur."
 )
 
@@ -827,6 +829,11 @@ def komutlari_isle(tg, durum, ayar):
                                         "(Telegram adı · 🎮 oyundaki adı)\n\n",
                            (satirlar or ["(henüz kimse yok)"]) +
                            ["\nOyun adı yoksa kişi <b>/nick OyunAdı</b> yazarak ekleyebilir."], mid)
+        elif komut in ("/alanpasif", "/pasifalan"):
+            if not durum.get("oyuncular"):
+                tg.gonder(chat_id, "Oyuncu listesi henüz yüklenmedi, biraz sonra tekrar dene.", mid)
+            elif not kisi_pasif_raporu(tg, durum, ayar, sahibi, chat_id, mid):
+                tg.gonder(chat_id, "Kayıtlı alan yok. Önce: <b>/alan 421|513 429|521</b>", mid)
         elif komut == "/alanlar":
             satirlar = []
             for k_uid, k in kisiler.items():
@@ -1001,13 +1008,74 @@ def pasifleri_bildir(tg, durum, ayar, simdi):
                 link = f"{ayar['dunya'].rstrip('/')}/game.php?screen=info_village&id={k['id']}"
                 satir += f'\n    📍 <a href="{link}">{k["x"]}|{k["y"]}</a> — ' + ", ".join(etiketler)
                 etiketli = True
-        satirlar.append((not etiketli, satir))
+        satirlar.append((not etiketli, satir + "\n"))   # isimler arasında boş satır
     satirlar.sort(key=lambda t: t[0])
     hedef = durum.get("grup_id") or tg.sahip_id
     parcali_gonder(tg, hedef,
                    f"⚫ <b>{len(satirlar)} OYUNCU {ayar['pasif_bildirim_gun']} GÜNDÜR HAREKETSİZ</b>\n"
                    "Puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
                    [s for _, s in satirlar])
+    kisi_raporlarini_kuyruga_al(durum, simdi)
+
+
+RAPOR_ARASI_SN = 10 * 60          # üye raporları arasında bekleme
+RAPOR_EN_SIK_SN = 20 * 3600       # üye raporları en fazla günde bir
+
+
+def kisi_raporlarini_kuyruga_al(durum, simdi, hemen=False):
+    """Toplu pasif listesinden 10 dk sonra başlayarak, alanı olan her üyeye ayrı rapor."""
+    if not hemen and simdi - durum.get("rapor_son_kuyruk", 0) < RAPOR_EN_SIK_SN:
+        return
+    kuyruk = [u for u, k in durum.get("kisiler", {}).items() if k.get("alanlar")]
+    if not kuyruk:
+        return
+    durum["rapor_kuyrugu"] = kuyruk
+    durum["rapor_sonraki"] = simdi if hemen else simdi + RAPOR_ARASI_SN
+    durum["rapor_son_kuyruk"] = simdi
+    print(f"::notice::{len(kuyruk)} üye için pasif raporu sıraya alındı.")
+
+
+def kisi_pasif_raporu(tg, durum, ayar, k_uid, hedef, mid=None):
+    """Bir üyenin alanlarında X gündür hareketsiz oyuncular: puana göre, köy koordinatlarıyla."""
+    kisi = durum.get("kisiler", {}).get(k_uid)
+    if not kisi or not kisi.get("alanlar"):
+        return False
+    gun = ayar["pasif_bildirim_gun"]
+    simdi = int(time.time())
+    oyuncular = durum.get("oyuncular", {})
+    alandaki = {}
+    for k in koyleri_al(ayar):
+        if k["oyuncu"] and any(alanda_mi(k, a) for a in kisi["alanlar"]):
+            alandaki.setdefault(str(k["oyuncu"]), []).append(k)
+    pasifler = sorted(((pid, oyuncular[pid]) for pid in alandaki
+                       if pid in oyuncular and oyuncular[pid]["k"] > 0 and simdi - oyuncular[pid]["d"] >= gun * GUN),
+                      key=lambda t: -t[1]["p"])
+    if not pasifler:
+        tg.gonder(hedef, f"✅ {etiket(k_uid, kisi)} alanında {gun} gündür hareketsiz oyuncu yok.", mid)
+        return True
+    dunya = ayar["dunya"].rstrip("/")
+    satirlar = []
+    for i, (pid, o) in enumerate(pasifler, 1):
+        koyler = " · ".join(f'📍 <a href="{dunya}/game.php?screen=info_village&id={k["id"]}">{k["x"]}|{k["y"]}</a>'
+                            f" ({nokta(k['puan'])})" for k in sorted(alandaki[pid], key=lambda k: -k["puan"]))
+        satirlar.append(f"<b>{i}.</b> {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · "
+                        f"<b>{nokta(o['p'])}</b> puan · {kisa_sure(durum, o, simdi)}\n    {koyler}\n")
+    parcali_gonder(tg, hedef,
+                   f"⚫ {etiket(k_uid, kisi)} alanında <b>{len(pasifler)} oyuncu {gun} gündür hareketsiz</b>\n"
+                   "Puana göre sıralı · altında alanındaki köyleri (köy puanı)\n\n", satirlar, mid)
+    return True
+
+
+def kisi_raporlarini_isle(tg, durum, ayar):
+    kuyruk = durum.get("rapor_kuyrugu") or []
+    simdi = int(time.time())
+    if not kuyruk or simdi < durum.get("rapor_sonraki", 0) or not durum.get("oyuncular"):
+        return
+    k_uid = kuyruk.pop(0)
+    hedef = durum.get("grup_id") or tg.sahip_id
+    kisi_pasif_raporu(tg, durum, ayar, k_uid, hedef)
+    durum["rapor_sonraki"] = simdi + RAPOR_ARASI_SN
+    print(f"::notice::Üye pasif raporu gönderildi; sırada {len(kuyruk)} kişi kaldı.")
 
 
 def komut_oyuncu(tg, durum, ayar, chat_id, mid, sorgu):
@@ -1159,7 +1227,8 @@ def alan_oyuncu_listesi(ayar, durum, alanlar, koyler):
     return satirlar, toplam
 
 
-ALAN_KOMUTLARI = ("/alan", "/alanim", "/alanlarim", "/alanım", "/alanlarım", "/alansil", "/alanısil")
+ALAN_KOMUTLARI = ("/alan", "/alanim", "/alanlarim", "/alanım", "/alanlarım", "/alansil", "/alanısil",
+                  "/alanpasif", "/pasifalan")
 
 
 def kisi_kimligi(ayar, durum, k_uid, k):
@@ -1568,10 +1637,11 @@ KOMUT_MENUSU = [
     ("harita", "Bölge haritası: /harita 421|513 429|521"),
     ("oyuncu", "Oyuncu bilgisi: /oyuncu İsim"),
     ("pasifler", "Pasif oyuncular: /pasifler ya da /pasifler KLAN"),
+    ("alanpasif", "Alanındaki 7 gündür hareketsiz oyuncular"),
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 4
+KOMUT_MENUSU_SURUM = 5
 
 
 def komut_menusunu_ayarla(tg, durum):
@@ -1632,6 +1702,11 @@ def tek_tur():
         durum["grup_test_1"] = True
     canli_tara(tg, durum, ayar)
     basarili = barbarlari_tara(tg, durum, ayar)
+    if not durum.get("rapor_ilk") and durum.get("takip_baslangic") and \
+            int(time.time()) - durum["takip_baslangic"] >= ayar["pasif_bildirim_gun"] * GUN:
+        durum["rapor_ilk"] = True    # bugünkü toplu liste bu sürümden önce gitti: üye raporlarını şimdi başlat
+        kisi_raporlarini_kuyruga_al(durum, int(time.time()), hemen=True)
+    kisi_raporlarini_isle(tg, durum, ayar)
     durum["son_calisma"] = TUR["baslangic"]
     durum_yaz(durum)
     print(f"::notice::Gönderilen mesaj: {TUR.get('gonderilen', 0)}")
