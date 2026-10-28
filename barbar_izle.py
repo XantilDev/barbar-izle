@@ -612,6 +612,7 @@ YARDIM = (
     "<code>/barbarlar</code> — alanlarındaki mevcut barbar köyleri\n"
     "<code>/harita 421|513 429|521</code> — herhangi bir bölgenin haritası\n"
     "<code>/alanlar</code> — gruptaki herkesin alanları\n"
+    "<code>/uyeler</code> — botu kullananlar ve oyundaki adları\n"
     "🛠️ <i>Bot sahibi başkasının alanını düzenleyebilir: <code>/alan İsim …</code>, "
     "<code>/alansil İsim 2</code>, <code>/alanim İsim</code> ya da kişinin mesajına yanıt vererek.</i>\n"
     "\n"
@@ -735,7 +736,11 @@ def komutlari_isle(tg, durum, ayar):
                     continue
                 bulunan = kisi_bul(durum, ilk)
                 if len(bulunan) != 1:
-                    adlar = ", ".join(html.escape(k.get("ad", "?")) for k in kisiler.values() if k.get("ad")) or "-"
+                    oy = durum.get("oyuncular", {})
+                    adlar = ", ".join(
+                        html.escape(k.get("ad", "?")) + (f" ({html.escape(oy[str(k['oyuncu_id'])]['n'])})"
+                                                         if str(k.get("oyuncu_id")) in oy else "")
+                        for k in kisiler.values() if k.get("ad")) or "-"
                     tg.gonder(chat_id, (f"“{html.escape(ilk)}” adında " + ("kimse bulunamadı." if not bulunan
                                         else "birden fazla kişi var.")) +
                                        f"\nKayıtlı kişiler: {adlar}\n"
@@ -815,12 +820,19 @@ def komutlari_isle(tg, durum, ayar):
                 on = f"{html.escape(sahip_kisi.get('ad', ''))} " if yonetici else ""
                 tg.gonder(chat_id, f"{len(alanlar_)} alan var, hangisini silelim?\n{liste}\n\n"
                                    f"Örnek: <b>/alansil {on}2</b> · hepsi için <b>/alansil {on}hepsi</b>", mid)
+        elif komut in ("/uyeler", "/üyeler", "/kimler"):
+            satirlar = [f"• {kisi_kimligi(ayar, durum, k_uid, k)} · 📍 {len(k.get('alanlar', []))} alan"
+                        for k_uid, k in kisiler.items() if k.get("ad")]
+            parcali_gonder(tg, chat_id, f"👥 <b>Botu kullanan {len(satirlar)} kişi</b>\n"
+                                        "(Telegram adı · 🎮 oyundaki adı)\n\n",
+                           (satirlar or ["(henüz kimse yok)"]) +
+                           ["\nOyun adı yoksa kişi <b>/nick OyunAdı</b> yazarak ekleyebilir."], mid)
         elif komut == "/alanlar":
             satirlar = []
             for k_uid, k in kisiler.items():
                 if not k.get("alanlar"):
                     continue
-                satirlar.append(f"\n👤 <b>{etiket(k_uid, k)}</b>")
+                satirlar.append(f"\n👤 <b>{kisi_kimligi(ayar, durum, k_uid, k)}</b>")
                 satirlar += [f"  {i}. {alan_metni(a)}" for i, a in enumerate(k["alanlar"], 1)]
             ipucu = ("\n\n🛠️ Düzenlemek için: <b>/alan İsim 420|510 430|515</b> · <b>/alansil İsim 2</b> · "
                      "<b>/alanim İsim</b> — ya da kişinin mesajına yanıt vererek yaz." if uid == tg.sahip_id else "")
@@ -1148,6 +1160,19 @@ def alan_oyuncu_listesi(ayar, durum, alanlar, koyler):
 
 
 ALAN_KOMUTLARI = ("/alan", "/alanim", "/alanlarim", "/alanım", "/alanlarım", "/alansil", "/alanısil")
+
+
+def kisi_kimligi(ayar, durum, k_uid, k):
+    """'Özkan (@ozk61) · 🎮 OzkanTR [UDW]' — Telegram adı, kullanıcı adı ve oyundaki adı."""
+    parca = etiket(k_uid, k)
+    if k.get("kullanici"):
+        parca += f" (@{html.escape(k['kullanici'])})"
+    o = durum.get("oyuncular", {}).get(str(k.get("oyuncu_id")))
+    if o:
+        parca += f" · 🎮 {oyuncu_linki(ayar, k['oyuncu_id'], o)}{klan_metni(ayar, durum, o)}"
+    else:
+        parca += " · 🎮 <i>oyun adı yok</i>"
+    return parca
 
 
 def kisi_bul(durum, sorgu):
@@ -1538,6 +1563,7 @@ KOMUT_MENUSU = [
     ("alanim", "Alanların, haritası ve pasif oyuncular"),
     ("alansil", "Alan sil: /alansil 2 ya da /alansil hepsi"),
     ("alanlar", "Gruptaki herkesin alanları"),
+    ("uyeler", "Botu kullananlar ve oyundaki adları"),
     ("barbarlar", "Alanlarındaki mevcut barbar köyleri"),
     ("harita", "Bölge haritası: /harita 421|513 429|521"),
     ("oyuncu", "Oyuncu bilgisi: /oyuncu İsim"),
@@ -1545,7 +1571,7 @@ KOMUT_MENUSU = [
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 3
+KOMUT_MENUSU_SURUM = 4
 
 
 def komut_menusunu_ayarla(tg, durum):
