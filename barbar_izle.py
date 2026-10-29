@@ -638,7 +638,8 @@ YARDIM = (
     "geri kalanından, saatte bir gelir.\n"
     "• Aktiflik = puan, köy, saldırı veya destek puanı artışı. Süredeki <b>+</b> işareti: bot takibe "
     "başladığından beri hiç değişmemiş demek.\n"
-    "• ⚫ 7 gündür hareketsiz oyuncular otomatik bildirilir; köyleri alanındaysa etiketlenirsin. "
+    "• ⚫ 7 gününü dolduran hareketsiz oyuncular 6 saatte bir (00, 06, 12, 18) toplu bildirilir; "
+    "köyleri alanındaysa etiketlenirsin. "
     "Ardından her üyeye 10'ar dakika arayla kendi alanının listesi gelir (en fazla günde bir).\n"
     "• Bot oyuna giriş yapmaz, hesabınla ilgisi yoktur; sadece Klanlar'ın herkese açık verisini okur."
 )
@@ -975,12 +976,25 @@ def oyunculari_guncelle(tg, durum, ayar):
         pasifleri_bildir(tg, durum, ayar, simdi)
 
 
+def pasif_dilimi(simdi):
+    """Günü 6 saatlik dilimlere böler (00-06, 06-12, 12-18, 18-24, Türkiye saati)."""
+    t = time.localtime(simdi)
+    return f"{t.tm_year}-{t.tm_yday}-{t.tm_hour // 6}"
+
+
 def pasifleri_bildir(tg, durum, ayar, simdi):
     esik = ayar["pasif_bildirim_gun"] * GUN
     if simdi - durum["takip_baslangic"] < esik:
         return   # yeterince uzun süredir takip etmiyoruz; yanlış alarm vermeyelim
+    # 7 günü dolanlar biriktirilir; 6 saatte bir (00, 06, 12, 18'den sonraki ilk turda) toplu bildirilir
+    dilim = pasif_dilimi(simdi)
+    if "pasif_dilim" not in durum:
+        durum["pasif_dilim"] = dilim     # ilk kurulumda sıradaki dilimi bekle
+    if durum["pasif_dilim"] == dilim:
+        return
     yeni_pasifler = [(pid, o) for pid, o in durum["oyuncular"].items()
                      if not o["b"] and o["k"] > 0 and simdi - o["d"] >= esik]
+    durum["pasif_dilim"] = dilim
     if not yeni_pasifler:
         return
     for _, o in yeni_pasifler:
@@ -1013,7 +1027,7 @@ def pasifleri_bildir(tg, durum, ayar, simdi):
     hedef = durum.get("grup_id") or tg.sahip_id
     parcali_gonder(tg, hedef,
                    f"⚫ <b>{len(satirlar)} OYUNCU {ayar['pasif_bildirim_gun']} GÜNDÜR HAREKETSİZ</b>\n"
-                   "Puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
+                   "Son 6 saatte 7 günü dolanlar · puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
                    [s for _, s in satirlar])
     kisi_raporlarini_kuyruga_al(durum, simdi)
 
@@ -1695,6 +1709,8 @@ def tek_tur():
     alanlari_duzelt(tg, durum)
     komut_menusunu_ayarla(tg, durum)
     oyunculari_guncelle(tg, durum, ayar)   # komutlar güncel veriyle yanıtlansın
+    if ayar["pasif_bildirim"] and durum.get("oyuncular") and durum.get("takip_baslangic"):
+        pasifleri_bildir(tg, durum, ayar, int(time.time()))   # 6 saatlik dilim başında gecikmesiz
     komutlari_isle(tg, durum, ayar)
     if durum.get("grup_id") and not durum.get("grup_test_1"):
         ok = tg.gonder(durum["grup_id"], "🔧 Test: bot bu gruba yazabiliyor. Komutlar için /yardim")
