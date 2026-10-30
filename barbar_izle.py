@@ -622,6 +622,8 @@ YARDIM = (
     "<code>/pasifler ANATOL</code> — bir klanın en pasif 10 oyuncusu\n"
     "<code>/alanpasif</code> — alanındaki 7 gündür hareketsiz oyuncular, köyleriyle\n"
     "<code>/istatistik</code> — oyuncular ortalama kaç gün hareketsizlikten sonra barbara dönüyor\n"
+    "<code>/takip OyuncuAdı</code> — o oyuncu barbara düşünce seni etiketlerim (profil bağlantısı da olur)\n"
+    "<code>/takip</code> — takip listen · <code>/takipsil OyuncuAdı</code> — takipten çıkar\n"
     "\n"
     "🎨 <b>HARİTA RENKLERİ</b>\n"
     "🟨 senin köylerin · ⬜ barbar · 🟫 diğer oyuncular · 🟥 çerçeve = alan\n"
@@ -847,6 +849,10 @@ def komutlari_isle(tg, durum, ayar):
                      "<b>/alanim İsim</b> — ya da kişinin mesajına yanıt vererek yaz." if uid == tg.sahip_id else "")
             parcali_gonder(tg, chat_id, "📍 <b>Gruptaki tüm alanlar</b>", (satirlar or ["\n(henüz kimse alan eklemedi)"])
                            + ([ipucu] if ipucu else []), mid)
+        elif komut == "/takip":
+            komut_takip(tg, durum, ayar, chat_id, mid, uid, kimden, arg)
+        elif komut in ("/takipsil", "/takipbirak"):
+            komut_takipsil(tg, durum, ayar, chat_id, mid, uid, arg)
         elif komut in ("/istatistik", "/istatistikler"):
             komut_istatistik(tg, durum, ayar, chat_id, mid)
         elif komut == "/durum":
@@ -981,6 +987,9 @@ def oyunculari_guncelle(tg, durum, ayar):
                 silinenler.append({"n": o["n"], "kl": o.get("kl", 0), "k": o["k"], "p": o["p"], "t": simdi,
                                    "sure": simdi - o["d"], "kesin": o["d"] > durum["takip_baslangic"]})
         del silinenler[:-500]
+        dusen = [pid for pid in eski if pid not in yeni and pid in durum.get("takipler", {})]
+        if dusen:
+            takip_dusenleri_bildir(tg, durum, ayar, dusen)
     durum["oyuncular"] = yeni
     print(f"[{zaman()}] {len(yeni)} oyuncu güncellendi.")
 
@@ -1005,7 +1014,7 @@ def pasifleri_bildir(tg, durum, ayar, simdi):
     if durum["pasif_dilim"] == dilim:
         return
     yeni_pasifler = [(pid, o) for pid, o in durum["oyuncular"].items()
-                     if not o["b"] and o["k"] > 0 and simdi - o["d"] >= esik]
+                     if not o.get("b") and o["k"] > 0 and simdi - o["d"] >= esik]
     durum["pasif_dilim"] = dilim
     if not yeni_pasifler:
         return
@@ -1152,6 +1161,108 @@ def komut_oyuncu(tg, durum, ayar, chat_id, mid, sorgu):
               f"⚔️ ODA {nokta(o['a'])} · 🤝 ODS {nokta(o['s'])}\n"
               f"📈 Son gelişme: {son}\n"
               f"{durum_metni}", mid)
+
+
+def takip_koylerini_guncelle(durum, koyler):
+    """Takip edilen oyuncuların köy listesini güncel tutar (silinince hangi köylerin düştüğünü bilmek için)."""
+    takipler = durum.get("takipler", {})
+    if not takipler or not koyler:
+        return
+    sahipli = {}
+    for k in koyler:
+        if str(k["oyuncu"]) in takipler:
+            sahipli.setdefault(str(k["oyuncu"]), []).append(k["id"])
+    for pid, t in takipler.items():
+        if sahipli.get(pid):
+            t["koyler"] = sahipli[pid]
+
+
+def takip_dusenleri_bildir(tg, durum, ayar, silinen_pidler):
+    takipler = durum.get("takipler", {})
+    hedef = durum.get("grup_id") or tg.sahip_id
+    dunya = ayar["dunya"].rstrip("/")
+    for pid in silinen_pidler:
+        t = takipler.pop(pid, None)
+        if not t:
+            continue
+        koy_id = set(t.get("koyler", []))
+        koyler = sorted((k for k in koyleri_al(ayar) if k["id"] in koy_id), key=lambda k: -k["puan"])
+        isteyenler = ", ".join(etiket(u, durum.get("kisiler", {}).get(u) or {"ad": "üye"}) for u in t["isteyenler"])
+        satirlar = [f'📍 <a href="{dunya}/game.php?screen=info_village&id={k["id"]}"><b>{k["x"]}|{k["y"]}</b></a> · '
+                    f'{nokta(k["puan"])} puan' + (" · barbar ✅" if k["oyuncu"] == 0 else " · ⚠️ başkası almış")
+                    for k in koyler]
+        parcali_gonder(tg, hedef,
+                       f"🚨 {isteyenler} — takip ettiğin <b>{html.escape(t['n'])}</b> silindi, "
+                       f"köyleri barbara düştü! ({len(koyler) or len(koy_id)} köy)\n\n",
+                       satirlar or ["Köy listesi henüz güncellenmedi; köyler bir sonraki barbar bildiriminde görünecek."])
+        print("::notice::Takip edilen oyuncu düştü, bildirildi.")
+
+
+def komut_takip(tg, durum, ayar, chat_id, mid, uid, kimden, arg):
+    takipler = durum.setdefault("takipler", {})
+    oyuncular = durum.get("oyuncular", {})
+    sorgu = arg.strip()
+    if not sorgu:
+        benim = [(pid, t) for pid, t in takipler.items() if uid in t["isteyenler"]]
+        if not benim:
+            tg.gonder(chat_id, "Takip ettiğin oyuncu yok.\nEklemek için: <b>/takip OyuncuAdı</b> "
+                               "(ya da oyuncunun profil bağlantısını yapıştır)", mid)
+            return
+        simdi = int(time.time())
+        satirlar = []
+        for pid, t in benim:
+            o = oyuncular.get(pid)
+            satirlar.append(f"• {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} · {o['k']} köy · "
+                            f"son gelişme {kisa_sure(durum, o, simdi)}" if o else f"• {html.escape(t['n'])}")
+        tg.gonder(chat_id, f"👁️ <b>Takip ettiğin {len(benim)} oyuncu</b>\n" + "\n".join(satirlar) +
+                           "\n\nBarbara düştüklerinde seni etiketleyeceğim. Kaldırmak için: <b>/takipsil OyuncuAdı</b>", mid)
+        return
+    m = re.search(r"[?&]id=(\d+)", sorgu)
+    if m or sorgu.isdigit():
+        pid = m.group(1) if m else sorgu
+        bulunan = [pid] if pid in oyuncular else []
+    else:
+        bulunan = oyuncu_ara(durum, sorgu)
+        tam = [p for p in bulunan if tr_kucuk(oyuncular[p]["n"]) == tr_kucuk(sorgu)]
+        bulunan = tam or bulunan
+    if not bulunan:
+        tg.gonder(chat_id, f"“{html.escape(sorgu)}” adında oyuncu bulamadım.", mid)
+        return
+    if len(bulunan) > 1:
+        tg.gonder(chat_id, "Birden fazla oyuncu var, tam adını yaz:\n" +
+                           "\n".join(f"• {html.escape(oyuncular[p]['n'])}" for p in bulunan[:10]), mid)
+        return
+    pid = bulunan[0]
+    o = oyuncular[pid]
+    t = takipler.setdefault(pid, {"n": o["n"], "isteyenler": [], "koyler": []})
+    t["n"] = o["n"]
+    if uid not in t["isteyenler"]:
+        t["isteyenler"].append(uid)
+    kisi = durum.setdefault("kisiler", {}).setdefault(uid, {"alanlar": []})
+    kisi.setdefault("ad", kimden.get("first_name") or "üye")
+    takip_koylerini_guncelle(durum, koyleri_al(ayar))
+    simdi = int(time.time())
+    tg.gonder(chat_id, f"👁️ {etiket(uid, kisi)} artık {oyuncu_linki(ayar, pid, o)}{klan_metni(ayar, durum, o)} "
+                       f"oyuncusunu takip ediyorsun.\n🏘️ {o['k']} köy · {nokta(o['p'])} puan · son gelişme "
+                       f"<b>{kisa_sure(durum, o, simdi)}</b>\nBarbara düştüğü an seni etiketleyip köylerini göndereceğim.", mid)
+
+
+def komut_takipsil(tg, durum, ayar, chat_id, mid, uid, arg):
+    takipler = durum.get("takipler", {})
+    q = tr_kucuk(arg.strip())
+    m = re.search(r"[?&]id=(\d+)", arg)
+    hedef_id = m.group(1) if m else q
+    adaylar = [pid for pid, t in takipler.items() if uid in t["isteyenler"] and
+               (pid == hedef_id or tr_kucuk(t["n"]) == q or (q and tr_kucuk(t["n"]).startswith(q)))]
+    if not adaylar:
+        tg.gonder(chat_id, "Takip listende böyle bir oyuncu yok. Listen için: <b>/takip</b>", mid)
+        return
+    pid = adaylar[0]
+    takipler[pid]["isteyenler"].remove(uid)
+    ad = takipler[pid]["n"]
+    if not takipler[pid]["isteyenler"]:
+        del takipler[pid]
+    tg.gonder(chat_id, f"🗑️ {html.escape(ad)} takipten çıkarıldı.", mid)
 
 
 def komut_istatistik(tg, durum, ayar, chat_id, mid):
@@ -1536,6 +1647,7 @@ def barbarlari_tara(tg, durum, ayar):
     if yeni_zaman:
         durum["liste_zamani"] = yeni_zaman
     TUR["koyler"] = koyler
+    takip_koylerini_guncelle(durum, koyler)
 
     barbarlar = {k["id"]: k for k in koyler if k["oyuncu"] == 0 and k["puan"] >= ayar["min_puan"]}
     hedef = durum.get("grup_id") or tg.sahip_id
@@ -1705,10 +1817,12 @@ KOMUT_MENUSU = [
     ("pasifler", "Pasif oyuncular: /pasifler ya da /pasifler KLAN"),
     ("alanpasif", "Alanındaki 7 gündür hareketsiz oyuncular"),
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
+    ("takip", "Oyuncu barbara düşünce haber ver: /takip İsim"),
+    ("takipsil", "Takipten çıkar: /takipsil İsim"),
     ("istatistik", "Ortalama kaç günde barbara dönülüyor"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 6
+KOMUT_MENUSU_SURUM = 7
 
 
 def komut_menusunu_ayarla(tg, durum):
@@ -1764,6 +1878,15 @@ def tek_tur():
     oyunculari_guncelle(tg, durum, ayar)   # komutlar güncel veriyle yanıtlansın
     if ayar["pasif_bildirim"] and durum.get("oyuncular") and durum.get("takip_baslangic"):
         pasifleri_bildir(tg, durum, ayar, int(time.time()))   # 6 saatlik dilim başında gecikmesiz
+    for pid in map(str, ayar.get("sahip_takipleri", [])):
+        if pid not in durum.get("takip_tohum", []) and pid in durum.get("oyuncular", {}):
+            t = durum.setdefault("takipler", {}).setdefault(
+                pid, {"n": durum["oyuncular"][pid]["n"], "isteyenler": [], "koyler": []})
+            if tg.sahip_id not in t["isteyenler"]:
+                t["isteyenler"].append(tg.sahip_id)
+            durum.setdefault("takip_tohum", []).append(pid)
+            takip_koylerini_guncelle(durum, koyleri_al(ayar))
+            print(f"::notice::Sahibin takip listesine oyuncu eklendi ({len(t['koyler'])} köy).")
     komutlari_isle(tg, durum, ayar)
     if durum.get("grup_id") and not durum.get("grup_test_1"):
         ok = tg.gonder(durum["grup_id"], "🔧 Test: bot bu gruba yazabiliyor. Komutlar için /yardim")
