@@ -621,6 +621,7 @@ YARDIM = (
     "<code>/pasifler</code> — 5 gündür hiç gelişmeyenler (<code>/pasifler 3</code> = 3 gün)\n"
     "<code>/pasifler ANATOL</code> — bir klanın en pasif 10 oyuncusu\n"
     "<code>/alanpasif</code> — alanındaki 7 gündür hareketsiz oyuncular, köyleriyle\n"
+    "<code>/istatistik</code> — oyuncular ortalama kaç gün hareketsizlikten sonra barbara dönüyor\n"
     "\n"
     "🎨 <b>HARİTA RENKLERİ</b>\n"
     "🟨 senin köylerin · ⬜ barbar · 🟫 diğer oyuncular · 🟥 çerçeve = alan\n"
@@ -846,6 +847,8 @@ def komutlari_isle(tg, durum, ayar):
                      "<b>/alanim İsim</b> — ya da kişinin mesajına yanıt vererek yaz." if uid == tg.sahip_id else "")
             parcali_gonder(tg, chat_id, "📍 <b>Gruptaki tüm alanlar</b>", (satirlar or ["\n(henüz kimse alan eklemedi)"])
                            + ([ipucu] if ipucu else []), mid)
+        elif komut in ("/istatistik", "/istatistikler"):
+            komut_istatistik(tg, durum, ayar, chat_id, mid)
         elif komut == "/durum":
             komut_durum(tg, durum, ayar, chat_id, mid)
         elif komut == "/barbarlar":
@@ -969,6 +972,15 @@ def oyunculari_guncelle(tg, durum, ayar):
         else:
             v["d"], v["b"] = o["d"], o.get("b", False)
         yeni[pid] = v
+    # Listeden düşen (hesabı silinen) oyuncular: köyleri barbara döner.
+    # Silinmeden önce ne kadar süre hareketsiz kaldıklarını istatistik için sakla.
+    if eski and len(yeni) > len(eski) * 0.5:   # liste bozuk/eksik geldiyse sayma
+        silinenler = durum.setdefault("silinenler", [])
+        for pid, o in eski.items():
+            if pid not in yeni and o.get("k", 0) > 0:
+                silinenler.append({"n": o["n"], "kl": o.get("kl", 0), "k": o["k"], "p": o["p"], "t": simdi,
+                                   "sure": simdi - o["d"], "kesin": o["d"] > durum["takip_baslangic"]})
+        del silinenler[:-500]
     durum["oyuncular"] = yeni
     print(f"[{zaman()}] {len(yeni)} oyuncu güncellendi.")
 
@@ -1140,6 +1152,46 @@ def komut_oyuncu(tg, durum, ayar, chat_id, mid, sorgu):
               f"⚔️ ODA {nokta(o['a'])} · 🤝 ODS {nokta(o['s'])}\n"
               f"📈 Son gelişme: {son}\n"
               f"{durum_metni}", mid)
+
+
+def komut_istatistik(tg, durum, ayar, chat_id, mid):
+    simdi = int(time.time())
+    takip = simdi - durum.get("takip_baslangic", simdi)
+    sil = durum.get("silinenler", [])
+    son30 = [x for x in sil if simdi - x["t"] <= 30 * GUN]
+    satirlar = [f"📊 <b>Hesabı silinen (köyleri barbara dönen) oyuncular</b>",
+                f"Takip süresi: {sure_metni(takip)} · kayıtlı silinme: <b>{len(sil)}</b>"]
+    if not sil:
+        satirlar.append("\nHenüz kayıt yok. Bir oyuncu listeden düştüğünde, o ana kadar ne kadar hareketsiz "
+                        "kaldığını kaydedeceğim; birkaç silinmeden sonra ortalama burada görünür.")
+        tg.gonder(chat_id, "\n".join(satirlar), mid)
+        return
+    kesin = sorted(x["sure"] for x in sil if x["kesin"])
+    alt_sinir = sorted(x["sure"] for x in sil if not x["kesin"])
+    gun = lambda sn: f"{sn / GUN:.1f} gün"
+    if kesin:
+        orta = kesin[len(kesin) // 2]
+        satirlar += [f"\n⏱️ <b>Silinmeden önceki hareketsizlik</b> ({len(kesin)} kesin ölçüm)",
+                     f"• Ortalama: <b>{gun(sum(kesin) / len(kesin))}</b>",
+                     f"• Ortanca: <b>{gun(orta)}</b>",
+                     f"• En kısa / en uzun: {gun(kesin[0])} / {gun(kesin[-1])}"]
+        kovalar = [(0, 3), (3, 7), (7, 10), (10, 14), (14, 21), (21, 9999)]
+        dag = []
+        for a, b in kovalar:
+            n = sum(1 for x in kesin if a * GUN <= x < b * GUN)
+            if n:
+                etiket_ = f"{a}-{b} gün" if b < 9999 else f"{a}+ gün"
+                dag.append(f"  {etiket_}: {'▇' * max(1, round(12 * n / len(kesin)))} {n}")
+        satirlar += ["• Dağılım:"] + dag
+    if alt_sinir:
+        aralik = gun(alt_sinir[0]) if alt_sinir[0] == alt_sinir[-1] else f"{gun(alt_sinir[0])}–{gun(alt_sinir[-1])}"
+        satirlar.append(f"\n➕ {len(alt_sinir)} oyuncu takip başladığından beri hiç gelişmeden silindi "
+                        f"(en az {aralik}; gerçek süre bilinmiyor, ortalamaya katılmadı).")
+    satirlar.append(f"\n🗓️ Son 30 günde silinen: {len(son30)} oyuncu, {sum(x['k'] for x in son30)} köy barbara döndü.")
+    if takip < 21 * GUN:
+        satirlar.append(f"\n<i>Not: takip başlayalı {sure_metni(takip)} oldu; bundan uzun hareketsizlikler henüz "
+                        "ölçülemez, bu yüzden ortalama şimdilik olduğundan kısa görünebilir.</i>")
+    tg.gonder(chat_id, "\n".join(satirlar), mid)
 
 
 def komut_klan_pasifleri(tg, durum, ayar, chat_id, mid, sorgu):
@@ -1653,9 +1705,10 @@ KOMUT_MENUSU = [
     ("pasifler", "Pasif oyuncular: /pasifler ya da /pasifler KLAN"),
     ("alanpasif", "Alanındaki 7 gündür hareketsiz oyuncular"),
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
+    ("istatistik", "Ortalama kaç günde barbara dönülüyor"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 5
+KOMUT_MENUSU_SURUM = 6
 
 
 def komut_menusunu_ayarla(tg, durum):
