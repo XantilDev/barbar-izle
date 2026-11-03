@@ -1,0 +1,12 @@
+name: Koy listesi (tek seferlik)
+on:
+  push:
+    branches: [main]
+    paths: ["arac/koylerim.py", ".github/workflows/koylerim.yml"]
+jobs:
+  liste:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 arac/koylerim.py
