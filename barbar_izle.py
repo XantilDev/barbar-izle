@@ -52,8 +52,8 @@ VARSAYILAN_AYAR = {
     "min_puan": 0,          # bu puanın altındaki barbar köyleri yok sayılır
     "kisi_basi_max_alan": 10,
     "pasif_liste_gun": 5,       # /pasifler varsayılanı
-    "pasif_bildirim": True,     # 7 gündür hareketsiz oyuncuları otomatik bildir
-    "pasif_bildirim_gun": 7,
+    "pasif_bildirim": True,     # 10 gündür hareketsiz oyuncuları otomatik bildir
+    "pasif_bildirim_gun": 10,
 }
 TUR = {}   # tek çalışma içinde paylaşılan veri (indirilen köy listesi gibi)
 INDIRME_ARALIGI_SN = 55 * 60   # sürüm bilgisi alınamazsa en fazla saatte bir indir
@@ -620,7 +620,7 @@ YARDIM = (
     "<code>/oyuncu İsim</code> — oyuncu bilgisi ve son ne zaman geliştiği\n"
     "<code>/pasifler</code> — 5 gündür hiç gelişmeyenler (<code>/pasifler 3</code> = 3 gün)\n"
     "<code>/pasifler ANATOL</code> — bir klanın en pasif 10 oyuncusu\n"
-    "<code>/alanpasif</code> — alanındaki 7 gündür hareketsiz oyuncular, köyleriyle\n"
+    "<code>/alanpasif</code> — alanındaki 10 gündür hareketsiz oyuncular, köyleriyle\n"
     "<code>/istatistik</code> — oyuncular ortalama kaç gün hareketsizlikten sonra barbara dönüyor\n"
     "<code>/takip OyuncuAdı</code> — o oyuncu barbara düşünce seni etiketlerim (profil bağlantısı da olur)\n"
     "<code>/takip</code> — takip listen · <code>/takipsil OyuncuAdı</code> — takipten çıkar\n"
@@ -641,7 +641,7 @@ YARDIM = (
     "geri kalanından, saatte bir gelir.\n"
     "• Aktiflik = puan, köy, saldırı veya destek puanı artışı. Süredeki <b>+</b> işareti: bot takibe "
     "başladığından beri hiç değişmemiş demek.\n"
-    "• ⚫ 7 gününü dolduran hareketsiz oyuncular 6 saatte bir (00, 06, 12, 18) toplu bildirilir; "
+    "• ⚫ 10 gününü dolduran hareketsiz oyuncular 6 saatte bir (00, 06, 12, 18) toplu bildirilir; "
     "köyleri alanındaysa etiketlenirsin. "
     "Ardından her üyeye 10'ar dakika arayla kendi alanının listesi gelir (en fazla günde bir).\n"
     "• Bot oyuna giriş yapmaz, hesabınla ilgisi yoktur; sadece Klanlar'ın herkese açık verisini okur."
@@ -1005,9 +1005,16 @@ def pasif_dilimi(simdi):
 
 def pasifleri_bildir(tg, durum, ayar, simdi):
     esik = ayar["pasif_bildirim_gun"] * GUN
+    if durum.get("pasif_esik_gun") != ayar["pasif_bildirim_gun"]:
+        # Eşik değişti (ör. 7 -> 10): eşiğin altında kalanların işaretini sıfırla ki yeni eşiği
+        # doldurunca bildirilsinler; zaten eşiğin üstünde olup bildirilmiş olanlar tekrar gelmesin.
+        for o in durum.get("oyuncular", {}).values():
+            if simdi - o["d"] < esik:
+                o["b"] = False
+        durum["pasif_esik_gun"] = ayar["pasif_bildirim_gun"]
     if simdi - durum["takip_baslangic"] < esik:
         return   # yeterince uzun süredir takip etmiyoruz; yanlış alarm vermeyelim
-    # 7 günü dolanlar biriktirilir; 6 saatte bir (00, 06, 12, 18'den sonraki ilk turda) toplu bildirilir
+    # Eşiği dolduranlar biriktirilir; 6 saatte bir (00, 06, 12, 18'den sonraki ilk turda) toplu bildirilir
     dilim = pasif_dilimi(simdi)
     if "pasif_dilim" not in durum:
         durum["pasif_dilim"] = dilim     # ilk kurulumda sıradaki dilimi bekle
@@ -1048,7 +1055,7 @@ def pasifleri_bildir(tg, durum, ayar, simdi):
     hedef = durum.get("grup_id") or tg.sahip_id
     parcali_gonder(tg, hedef,
                    f"⚫ <b>{len(satirlar)} OYUNCU {ayar['pasif_bildirim_gun']} GÜNDÜR HAREKETSİZ</b>\n"
-                   "Son 6 saatte 7 günü dolanlar · puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
+                   f"Son 6 saatte {ayar['pasif_bildirim_gun']} günü dolanlar · puan, köy, ODA ve ODS değişmedi — yakında barbara düşebilir.\n\n",
                    [s for _, s in satirlar])
     kisi_raporlarini_kuyruga_al(durum, simdi)
 
@@ -1815,14 +1822,14 @@ KOMUT_MENUSU = [
     ("harita", "Bölge haritası: /harita 421|513 429|521"),
     ("oyuncu", "Oyuncu bilgisi: /oyuncu İsim"),
     ("pasifler", "Pasif oyuncular: /pasifler ya da /pasifler KLAN"),
-    ("alanpasif", "Alanındaki 7 gündür hareketsiz oyuncular"),
+    ("alanpasif", "Alanındaki 10 gündür hareketsiz oyuncular"),
     ("klanrenk", "Klan rengi: /klanrenk UDW mavi"),
     ("takip", "Oyuncu barbara düşünce haber ver: /takip İsim"),
     ("takipsil", "Takipten çıkar: /takipsil İsim"),
     ("istatistik", "Ortalama kaç günde barbara dönülüyor"),
     ("durum", "Bot durumu ve en hareketsiz 10 oyuncu"),
 ]
-KOMUT_MENUSU_SURUM = 7
+KOMUT_MENUSU_SURUM = 8
 
 
 def komut_menusunu_ayarla(tg, durum):
